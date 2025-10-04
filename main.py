@@ -1,6 +1,6 @@
 """
 TO DO
-Add Gen AI API CALL
+Add Gen AI API CALL (BELUM)
 Add Hue Slider (done)
 Add Highlight Slider (done)
 Add Shadow Slider (done)
