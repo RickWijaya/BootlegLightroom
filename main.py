@@ -1,3 +1,21 @@
+"""
+TO DO
+Add Gen AI API CALL
+Add Hue Slider
+Add Highlight Slider
+Add Shadow Slider
+Add Tint Slider
+Add Vibrance Slider
+
+Cara run  :
+1. Install dependencies:
+   pip install pillow numpy opencv-python matplotlib
+2. Run the script:
+   python main.py
+3. Make sure using python 3.7 or above
+--Ricky Wijaya
+"""
+
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -13,7 +31,7 @@ from matplotlib.figure import Figure
 class AdvancedImageProcessor(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Advanced Image Editor - Lightroom Style")
+        self.title("BLALR - Advanced Image Processor")
         self.geometry("1400x800")
         self.minsize(1200, 700)
         self.maxsize(1920, 1080)
@@ -27,8 +45,6 @@ class AdvancedImageProcessor(tk.Tk):
         self.original_image = None
         self.current_image = None
         self.preview_image_tk = None
-        self.history = []
-        self.history_index = -1
         
         # Transform values
         self.transform_values = {
@@ -41,6 +57,9 @@ class AdvancedImageProcessor(tk.Tk):
             'shear_x': 0,
             'shear_y': 0
         }
+        
+        # Store slider references for reset
+        self.slider_widgets = {}
         
         # API Key for image generation (user will need to provide)
         self.api_key = ""
@@ -56,6 +75,7 @@ class AdvancedImageProcessor(tk.Tk):
         self.style.configure('TButton', background='#404040', foreground='white')
         self.style.map('TButton', background=[('active', '#505050')])
         self.style.configure('TScale', background='#2b2b2b', troughcolor='#404040')
+        self.style.configure('TEntry', fieldbackground='#404040', foreground='white')
         self.style.configure('Header.TLabel', font=('Arial', 10, 'bold'))
         
     def _build_ui(self):
@@ -98,8 +118,6 @@ class AdvancedImageProcessor(tk.Tk):
         ttk.Button(toolbar, text="Open", command=self.open_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Save", command=self.save_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Generate AI Image", command=self.generate_ai_image).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="↺ Undo", command=self.undo).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="↻ Redo", command=self.redo).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Reset", command=self.reset_image).pack(side=tk.LEFT, padx=2)
         
         # Status
@@ -128,11 +146,11 @@ class AdvancedImageProcessor(tk.Tk):
         ttk.Label(scrollable_frame, text="Basic Transforms", style='Header.TLabel').pack(pady=5)
 
         # Resize
-        self._add_slider(scrollable_frame, "Resize (%)", 10, 200, 100, 
+        self._add_slider_with_entry(scrollable_frame, "Resize (%)", 'resize', 10, 200, 100, 
                         lambda v: self.update_transform('resize', v))
 
         # Rotate
-        self._add_slider(scrollable_frame, "Rotate (°)", -180, 180, 0, 
+        self._add_slider_with_entry(scrollable_frame, "Rotate (°)", 'rotate', -180, 180, 0, 
                         lambda v: self.update_transform('rotate', v))
 
         # Crop button
@@ -143,27 +161,27 @@ class AdvancedImageProcessor(tk.Tk):
 
         # Translation
         ttk.Label(scrollable_frame, text="Translation", style='Header.TLabel').pack(pady=5)
-        self._add_slider(scrollable_frame, "Translate X", -200, 200, 0, 
+        self._add_slider_with_entry(scrollable_frame, "Translate X", 'translate_x', -200, 200, 0, 
                         lambda v: self.update_transform('translate_x', v))
-        self._add_slider(scrollable_frame, "Translate Y", -200, 200, 0, 
+        self._add_slider_with_entry(scrollable_frame, "Translate Y", 'translate_y', -200, 200, 0, 
                         lambda v: self.update_transform('translate_y', v))
 
         ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
         # Scale
         ttk.Label(scrollable_frame, text="Scale", style='Header.TLabel').pack(pady=5)
-        self._add_slider(scrollable_frame, "Scale X (%)", 10, 200, 100, 
+        self._add_slider_with_entry(scrollable_frame, "Scale X (%)", 'scale_x', 10, 200, 100, 
                         lambda v: self.update_transform('scale_x', v))
-        self._add_slider(scrollable_frame, "Scale Y (%)", 10, 200, 100, 
+        self._add_slider_with_entry(scrollable_frame, "Scale Y (%)", 'scale_y', 10, 200, 100, 
                         lambda v: self.update_transform('scale_y', v))
 
         ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
         # Shear
         ttk.Label(scrollable_frame, text="Shear", style='Header.TLabel').pack(pady=5)
-        self._add_slider(scrollable_frame, "Shear X", -45, 45, 0, 
+        self._add_slider_with_entry(scrollable_frame, "Shear X", 'shear_x', -45, 45, 0, 
                         lambda v: self.update_transform('shear_x', v))
-        self._add_slider(scrollable_frame, "Shear Y", -45, 45, 0, 
+        self._add_slider_with_entry(scrollable_frame, "Shear Y", 'shear_y', -45, 45, 0, 
                         lambda v: self.update_transform('shear_y', v))
 
         ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
@@ -181,25 +199,12 @@ class AdvancedImageProcessor(tk.Tk):
 
         
     def _build_center_panel(self):
-        """Build center panel with image display"""
         # Image display
         self.image_label = ttk.Label(self.center_frame, anchor=tk.CENTER)
         self.image_label.pack(fill=tk.BOTH, expand=True)
         
-        # Zoom controls
-        zoom_frame = ttk.Frame(self.center_frame)
-        zoom_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(zoom_frame, text="Zoom:").pack(side=tk.LEFT, padx=5)
-        self.zoom_var = tk.IntVar(value=100)
-        self.zoom_slider = ttk.Scale(zoom_frame, from_=10, to=200, orient=tk.HORIZONTAL,
-                                     variable=self.zoom_var, command=self._update_zoom)
-        self.zoom_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.zoom_label = ttk.Label(zoom_frame, text="100%")
-        self.zoom_label.pack(side=tk.LEFT, padx=5)
-        
     def _build_right_panel(self):
-        """Build right panel with color adjustments, filters, and histogram"""
+        self._build_histogram()
         # Create notebook for tabs
         notebook = ttk.Notebook(self.right_panel)
         notebook.pack(fill=tk.BOTH, expand=True)
@@ -222,34 +227,20 @@ class AdvancedImageProcessor(tk.Tk):
         
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-    
-        # ========= HISTOGRAM SECTION =========
-        ttk.Label(scrollable_frame, text="Histogram", style='Header.TLabel').pack(pady=5)
-    
-        # Histogram display frame (you can update later dynamically)
-        self.histogram_frame = ttk.Frame(scrollable_frame, relief=tk.SUNKEN)
-        self.histogram_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-    
-        # Button to update histogram (optional)
-        ttk.Button(scrollable_frame, text="Refresh Histogram", 
-                  command=self.update_histogram).pack(fill=tk.X, padx=10, pady=5)
-    
-        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
-        
         # ========= COLOR ADJUSTMENTS =========
         ttk.Label(scrollable_frame, text="Color Adjustments", style='Header.TLabel').pack(pady=5)
         
-        self.saturation_var = self._add_slider(scrollable_frame, "Saturation", 0, 2, 1, 
+        self.saturation_var = self._add_slider_with_entry(scrollable_frame, "Saturation", 'saturation', 0, 2, 1, 
                                                self._adjust_preview)
-        self.brightness_var = self._add_slider(scrollable_frame, "Brightness", 0.2, 2, 1, 
+        self.brightness_var = self._add_slider_with_entry(scrollable_frame, "Brightness", 'brightness', 0.2, 2, 1, 
                                                self._adjust_preview)
-        self.blacks_var = self._add_slider(scrollable_frame, "Blacks", -100, 100, 0, 
+        self.blacks_var = self._add_slider_with_entry(scrollable_frame, "Blacks", 'blacks', -100, 100, 0, 
                                            self._adjust_preview)
-        self.whites_var = self._add_slider(scrollable_frame, "Whites", -100, 100, 0, 
+        self.whites_var = self._add_slider_with_entry(scrollable_frame, "Whites", 'whites', -100, 100, 0, 
                                            self._adjust_preview)
-        self.contrast_var = self._add_slider(scrollable_frame, "Contrast", 0.2, 2, 1, 
+        self.contrast_var = self._add_slider_with_entry(scrollable_frame, "Contrast", 'contrast', 0.2, 2, 1, 
                                              self._adjust_preview)
-        self.exposure_var = self._add_slider(scrollable_frame, "Exposure", -2, 2, 0, 
+        self.exposure_var = self._add_slider_with_entry(scrollable_frame, "Exposure", 'exposure', -2, 2, 0, 
                                              self._adjust_preview)
         
         canvas.pack(side="left", fill="both", expand=True)
@@ -265,8 +256,18 @@ class AdvancedImageProcessor(tk.Tk):
         
         ttk.Label(morph_frame, text="Kernel Size:").pack(pady=5)
         self.kernel_size_var = tk.IntVar(value=3)
-        ttk.Scale(morph_frame, from_=1, to=15, orient=tk.HORIZONTAL,
-                 variable=self.kernel_size_var).pack(fill=tk.X, padx=10, pady=5)
+        kernel_frame = ttk.Frame(morph_frame)
+        kernel_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        kernel_slider = ttk.Scale(kernel_frame, from_=1, to=15, orient=tk.HORIZONTAL,
+                                 variable=self.kernel_size_var)
+        kernel_slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        kernel_entry = ttk.Entry(kernel_frame, textvariable=self.kernel_size_var, width=5)
+        kernel_entry.pack(side=tk.RIGHT, padx=5)
+        
+        # Store for reset
+        self.slider_widgets['kernel_size'] = (kernel_slider, kernel_entry, self.kernel_size_var, 3)
         
         ttk.Button(morph_frame, text="Erosion", 
                   command=lambda: self.apply_morphology('erosion')).pack(fill=tk.X, padx=10, pady=2)
@@ -287,9 +288,9 @@ class AdvancedImageProcessor(tk.Tk):
         
         ttk.Label(filter_frame, text="Filter Effects", style='Header.TLabel').pack(pady=10)
         
-        self.blur_var = self._add_slider(filter_frame, "Blur", 0, 20, 0, self._adjust_preview)
-        self.noise_var = self._add_slider(filter_frame, "Noise", 0, 100, 0, self._adjust_preview)
-        self.vignette_var = self._add_slider(filter_frame, "Vignette", 0, 100, 0, self._adjust_preview)
+        self.blur_var = self._add_slider_with_entry(filter_frame, "Blur", 'blur', 0, 20, 0, self._adjust_preview)
+        self.noise_var = self._add_slider_with_entry(filter_frame, "Noise", 'noise', 0, 100, 0, self._adjust_preview)
+        self.vignette_var = self._add_slider_with_entry(filter_frame, "Vignette", 'vignette', 0, 100, 0, self._adjust_preview)
         
         ttk.Separator(filter_frame, orient='horizontal').pack(fill=tk.X, pady=10)
         
@@ -306,69 +307,90 @@ class AdvancedImageProcessor(tk.Tk):
                   command=lambda: self.apply_filter('sharpen')).pack(fill=tk.X, padx=10, pady=2)
 
         
-    def _add_slider(self, parent, label, min_val, max_val, default, command):
-        """Add a slider with label and value display"""
+    def _add_slider_with_entry(self, parent, label, key, min_val, max_val, default, command):
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.X, padx=10, pady=5)
-        
+
         ttk.Label(frame, text=label).pack(anchor=tk.W)
-        
         var = tk.DoubleVar(value=default)
-        
+
         slider_frame = ttk.Frame(frame)
         slider_frame.pack(fill=tk.X)
-        
-        slider = ttk.Scale(slider_frame, from_=min_val, to=max_val, 
-                          orient=tk.HORIZONTAL, variable=var, command=command)
+
+        slider = ttk.Scale(slider_frame, from_=min_val, to=max_val,
+                          orient=tk.HORIZONTAL, variable=var)
         slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        value_label = ttk.Label(slider_frame, text=f"{default:.1f}")
-        value_label.pack(side=tk.RIGHT, padx=5)
-        
-        def update_label(val):
-            value_label.config(text=f"{float(val):.1f}")
+
+        entry = ttk.Entry(slider_frame, textvariable=var, width=6)
+        entry.pack(side=tk.RIGHT, padx=5)
+
+        # Debounce setup
+        delay_ms = 300
+        self._debounce_after_ids = getattr(self, "_debounce_after_ids", {})
+
+        def schedule_update():
             if command:
-                command(val)
-        
-        slider.config(command=update_label)
-        
+                if key in self._debounce_after_ids:
+                    self.after_cancel(self._debounce_after_ids[key])
+                self._debounce_after_ids[key] = self.after(
+                    delay_ms, lambda: command(var.get())
+                )
+
+        # Event bindings for smooth UX
+        slider.bind("<ButtonRelease-1>", lambda e: schedule_update())
+        slider.bind("<KeyRelease>", lambda e: schedule_update())
+        entry.bind("<Return>", lambda e: schedule_update())
+        entry.bind("<FocusOut>", lambda e: schedule_update())
+
+        def validate_entry(*_):
+            try:
+                value = float(var.get())
+                if value < min_val:
+                    var.set(min_val)
+                elif value > max_val:
+                    var.set(max_val)
+            except (ValueError, tk.TclError):
+                var.set(default)
+
+        var.trace_add("write", lambda *_: validate_entry())
+
+        # Store for reset
+        self.slider_widgets[key] = (slider, entry, var, default)
         return var
-    
-    def update_histogram(self):
-        """Update histogram display"""
-        if self.current_image is None:
+
+    def _build_histogram(self):
+        hist_frame = ttk.Frame(self.right_panel)
+        hist_frame.pack(fill=tk.X, pady=5)
+
+        fig = Figure(figsize=(6, 2), dpi=100, facecolor='#2b2b2b')
+        self.hist_ax = fig.add_subplot(111)
+        self.hist_ax.set_facecolor('#2b2b2b')
+        self.hist_ax.tick_params(colors='white')
+        self.hist_ax.set_title("Histogram", color='white')
+
+        self.hist_canvas = FigureCanvasTkAgg(fig, master=hist_frame)
+        self.hist_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _update_histogram(self, img=None):
+        """Update histogram for the current image"""
+        if img is None:
+            img = self.current_image
+        if img is None:
             return
-        
-        # Clear previous histogram
-        for widget in self.histogram_frame.winfo_children():
-            widget.destroy()
-        
-        # Create figure
-        fig = Figure(figsize=(4, 3), dpi=80, facecolor='#2b2b2b')
-        ax = fig.add_subplot(111)
-        ax.set_facecolor('#404040')
-        
-        # Convert to RGB for histogram
-        img_rgb = self.current_image.convert('RGB')
-        img_array = np.array(img_rgb)
-        
-        # Calculate histograms
+
+        img_array = np.array(img.convert('RGB'))
+        self.hist_ax.clear()
         colors = ('r', 'g', 'b')
         for i, color in enumerate(colors):
-            hist, bins = np.histogram(img_array[:,:,i], bins=256, range=(0, 256))
-            ax.plot(hist, color=color, alpha=0.7, linewidth=1)
-        
-        ax.set_xlim([0, 256])
-        ax.set_xlabel('Pixel Value', color='white')
-        ax.set_ylabel('Frequency', color='white')
-        ax.set_title('RGB Histogram', color='white')
-        ax.tick_params(colors='white')
-        ax.grid(True, alpha=0.3)
-        
-        # Embed in tkinter
-        canvas = FigureCanvasTkAgg(fig, master=self.histogram_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            hist = cv2.calcHist([img_array], [i], None, [256], [0, 256])
+            self.hist_ax.plot(hist, color=color)
+        self.hist_ax.set_xlim([0, 256])
+        self.hist_ax.set_facecolor('#2b2b2b')
+        self.hist_ax.tick_params(colors='white')
+        self.hist_ax.set_title("Histogram", color='white')
+        self.hist_canvas.draw_idle()
+
+
     
     def generate_ai_image(self):
         """Generate AI image using API"""
@@ -404,9 +426,8 @@ class AdvancedImageProcessor(tk.Tk):
         
         self.original_image = img
         self.current_image = img.copy()
-        self.save_to_history()
+        self.reset_all_sliders()
         self.update_image_preview()
-        self.update_histogram()
         self.status_label.config(text=f"Generated AI image: {width}x{height}")
     
     def open_image(self):
@@ -421,11 +442,8 @@ class AdvancedImageProcessor(tk.Tk):
             img = Image.open(path).convert('RGBA')
             self.original_image = img
             self.current_image = img.copy()
-            self.history = [img.copy()]
-            self.history_index = 0
             self.reset_all_sliders()
             self.update_image_preview()
-            self.update_histogram()
             self.status_label.config(text=f"Loaded: {os.path.basename(path)} ({img.width}x{img.height})")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open image:\n{e}")
@@ -584,9 +602,7 @@ class AdvancedImageProcessor(tk.Tk):
                 result[:,:,i] = cv2.morphologyEx(channel, cv2.MORPH_GRADIENT, kernel)
         
         self.current_image = Image.fromarray(result, mode='RGB').convert('RGBA')
-        self.save_to_history()
         self.update_image_preview()
-        self.update_histogram()
     
     def apply_filter(self, filter_name):
         """Apply various filters"""
@@ -607,9 +623,7 @@ class AdvancedImageProcessor(tk.Tk):
             img = img.filter(ImageFilter.SHARPEN)
         
         self.current_image = img
-        self.save_to_history()
         self.update_image_preview()
-        self.update_histogram()
     
     def apply_sepia(self, img):
         """Apply sepia tone effect"""
@@ -758,9 +772,7 @@ class AdvancedImageProcessor(tk.Tk):
             # Ensure valid crop area
             if crop_x2 - crop_x1 > 10 and crop_y2 - crop_y1 > 10:
                 self.current_image = self.current_image.crop((crop_x1, crop_y1, crop_x2, crop_y2))
-                self.save_to_history()
                 self.update_image_preview()
-                self.update_histogram()
                 crop_window.destroy()
             else:
                 messagebox.showwarning("Warning", "Please select a larger crop area")
@@ -785,23 +797,17 @@ class AdvancedImageProcessor(tk.Tk):
         elif direction == 'vertical':
             self.current_image = ImageOps.flip(self.current_image)
         
-        self.save_to_history()
         self.update_image_preview()
-        self.update_histogram()
     
     def _adjust_preview(self, value=None):
-        """Update image preview with current adjustments"""
         if self.current_image is None:
             return
-        
-        # Apply adjustments for preview
         img = self.apply_all_adjustments()
-        
-        # Update preview
         self.update_image_preview(img)
+        self._update_histogram(img)
     
     def update_image_preview(self, img=None):
-        """Update the main image display with size limits"""
+        self._update_histogram(img)
         if img is None:
             img = self.current_image
 
@@ -810,12 +816,11 @@ class AdvancedImageProcessor(tk.Tk):
 
         # Set maximum display dimensions to prevent GUI breaking
         max_display_width = 800
-        max_display_height = 400
+        max_display_height = 600
 
-        # Calculate display size based on zoom and maximum limits
-        zoom_factor = self.zoom_var.get() / 100.0
-        display_width = int(img.width * zoom_factor)
-        display_height = int(img.height * zoom_factor)
+        # Calculate display size
+        display_width = img.width
+        display_height = img.height
 
         # Apply maximum size limits
         if display_width > max_display_width or display_height > max_display_height:
@@ -838,59 +843,15 @@ class AdvancedImageProcessor(tk.Tk):
         # Convert to PhotoImage
         self.preview_image_tk = ImageTk.PhotoImage(display_img)
         self.image_label.configure(image=self.preview_image_tk)
-
-        # Update zoom label with actual display scale info
-        actual_scale = (display_img.width / img.width) * 100
-        self.zoom_label.config(text=f"{int(self.zoom_var.get())}% (Display: {actual_scale:.1f}%)")
-    
-    def _update_zoom(self, value):
-        """Update zoom level"""
-        self.update_image_preview()
-    
-    def save_to_history(self):
-        """Save current state to history"""
-        if self.current_image is None:
-            return
-        
-        # Remove any future states if we're not at the end
-        if self.history_index < len(self.history) - 1:
-            self.history = self.history[:self.history_index + 1]
-        
-        self.history.append(self.current_image.copy())
-        self.history_index = len(self.history) - 1
-        
-        # Limit history size
-        if len(self.history) > 50:
-            self.history.pop(0)
-            self.history_index -= 1
-    
-    def undo(self):
-        """Undo last operation"""
-        if self.history_index > 0:
-            self.history_index -= 1
-            self.current_image = self.history[self.history_index].copy()
-            self.update_image_preview()
-            self.update_histogram()
-    
-    def redo(self):
-        """Redo last undone operation"""
-        if self.history_index < len(self.history) - 1:
-            self.history_index += 1
-            self.current_image = self.history[self.history_index].copy()
-            self.update_image_preview()
-            self.update_histogram()
     
     def reset_image(self):
         """Reset image to original state"""
         if self.original_image is not None:
             self.current_image = self.original_image.copy()
-            self.save_to_history()
             self.reset_all_sliders()
             self.update_image_preview()
-            self.update_histogram()
     
     def reset_all_sliders(self):
-        """Reset all adjustment sliders to default values"""
         # Reset transform values
         self.transform_values = {
             'resize': 100,
@@ -903,78 +864,13 @@ class AdvancedImageProcessor(tk.Tk):
             'shear_y': 0
         }
         
-        # Reset color adjustments
-        self.saturation_var.set(1.0)
-        self.brightness_var.set(1.0)
-        self.blacks_var.set(0)
-        self.whites_var.set(0)
-        self.contrast_var.set(1.0)
-        self.exposure_var.set(0)
-        
-        # Reset filter adjustments
-        self.blur_var.set(0)
-        self.noise_var.set(0)
-        self.vignette_var.set(0)
-        
-        # Reset zoom
-        self.zoom_var.set(100)
-        
-        # Update any transform sliders if they exist
-        for child in self.left_panel.winfo_children():
-            if isinstance(child, ttk.Notebook):
-                for tab in child.tabs():
-                    frame = child.nametowidget(tab)
-                    self._reset_sliders_in_frame(frame)
+        # Reset all slider widgets
+        for key, (slider, entry, var, default) in self.slider_widgets.items():
+            var.set(default)
     
-    def _reset_sliders_in_frame(self, frame):
-        """Recursively reset sliders in a frame"""
-        for child in frame.winfo_children():
-            if isinstance(child, ttk.Scale):
-                # Try to find the default value based on the slider range
-                config = child.configure()
-                if 'from_' in config and 'to' in config:
-                    from_val = float(config['from_'][4])
-                    to_val = float(config['to'][4])
-                    default = (from_val + to_val) / 2
-                    if hasattr(child, 'variable'):
-                        child.variable.set(default)
-            elif isinstance(child, (tk.Frame, ttk.Frame)):
-                self._reset_sliders_in_frame(child)
-
     def run(self):
-        """Start the application"""
         self.mainloop()
-
-# Additional utility functions for image processing
-def create_gradient_image(width, height):
-    """Create a gradient image for testing"""
-    img = Image.new('RGB', (width, height))
-    draw = ImageDraw.Draw(img)
-    
-    for i in range(height):
-        r = int(255 * (i / height))
-        g = int(255 * ((height - i) / height))
-        b = 128
-        draw.line([(0, i), (width, i)], fill=(r, g, b))
-    
-    return img
 
 if __name__ == "__main__":
     app = AdvancedImageProcessor()
-    
-    # Load a sample image for demonstration
-    try:
-        # Create a sample gradient image
-        sample_img = create_gradient_image(800, 600)
-        app.original_image = sample_img
-        app.current_image = sample_img.copy()
-        app.history = [sample_img.copy()]
-        app.history_index = 0
-        app.update_image_preview()
-        app.update_histogram()
-        app.status_label.config(text="Loaded sample gradient image (800x600)")
-    except Exception as e:
-        print(f"Could not create sample image: {e}")
-    
     app.run()
-
