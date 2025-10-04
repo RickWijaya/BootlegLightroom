@@ -1,11 +1,11 @@
 """
 TO DO
-Add Gen AI API CALL
-Add Hue Slider
-Add Highlight Slider
-Add Shadow Slider
-Add Tint Slider
-Add Vibrance Slider
+Add Gen AI API CALL (BELUM)
+Add Hue Slider (done)
+Add Highlight Slider (done)
+Add Shadow Slider (done)
+Add Tint Slider (done)
+Add Vibrance Slider (done)
 
 Cara run  :
 1. Install dependencies:
@@ -27,6 +27,7 @@ from io import BytesIO
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+import colorsys
 
 class AdvancedImageProcessor(tk.Tk):
     def __init__(self):
@@ -230,18 +231,35 @@ class AdvancedImageProcessor(tk.Tk):
         # ========= COLOR ADJUSTMENTS =========
         ttk.Label(scrollable_frame, text="Color Adjustments", style='Header.TLabel').pack(pady=5)
         
-        self.saturation_var = self._add_slider_with_entry(scrollable_frame, "Saturation", 'saturation', 0, 2, 1, 
-                                               self._adjust_preview)
+        self.exposure_var = self._add_slider_with_entry(scrollable_frame, "Exposure", 'exposure', -2, 2, 0, 
+                                             self._adjust_preview)
+        
+        # Highlights and Shadows
+        self.highlights_var = self._add_slider_with_entry(scrollable_frame, "Highlights", 'highlights', -100, 100, 0, 
+                                           self._adjust_preview)
+        self.shadows_var = self._add_slider_with_entry(scrollable_frame, "Shadows", 'shadows', -100, 100, 0, 
+                                           self._adjust_preview)
+        
+        self.contrast_var = self._add_slider_with_entry(scrollable_frame, "Contrast", 'contrast', 0.2, 2, 1, 
+                                             self._adjust_preview)
         self.brightness_var = self._add_slider_with_entry(scrollable_frame, "Brightness", 'brightness', 0.2, 2, 1, 
                                                self._adjust_preview)
         self.blacks_var = self._add_slider_with_entry(scrollable_frame, "Blacks", 'blacks', -100, 100, 0, 
                                            self._adjust_preview)
         self.whites_var = self._add_slider_with_entry(scrollable_frame, "Whites", 'whites', -100, 100, 0, 
                                            self._adjust_preview)
-        self.contrast_var = self._add_slider_with_entry(scrollable_frame, "Contrast", 'contrast', 0.2, 2, 1, 
-                                             self._adjust_preview)
-        self.exposure_var = self._add_slider_with_entry(scrollable_frame, "Exposure", 'exposure', -2, 2, 0, 
-                                             self._adjust_preview)
+        
+        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
+        
+        # Hue, Tint, and Vibrance
+        self.hue_var = self._add_slider_with_entry(scrollable_frame, "Hue", 'hue', -180, 180, 0, 
+                                               self._adjust_preview)
+        self.tint_var = self._add_slider_with_entry(scrollable_frame, "Tint (G/M)", 'tint', -100, 100, 0, 
+                                               self._adjust_preview) # New Tint Slider
+        self.saturation_var = self._add_slider_with_entry(scrollable_frame, "Saturation", 'saturation', 0, 2, 1, 
+                                               self._adjust_preview)
+        self.vibrance_var = self._add_slider_with_entry(scrollable_frame, "Vibrance", 'vibrance', -100, 100, 0, 
+                                               self._adjust_preview) # New Vibrance Slider
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -477,39 +495,63 @@ class AdvancedImageProcessor(tk.Tk):
         
         img = self.current_image.copy()
         
-        # Apply color adjustments
-        # Saturation
-        sat = float(self.saturation_var.get())
-        if sat != 1.0:
-            converter = ImageEnhance.Color(img)
-            img = converter.enhance(sat)
+        # --- ORDER MATTERS FOR PHOTO EDITING ---
         
-        # Brightness
-        bright = float(self.brightness_var.get())
-        if bright != 1.0:
-            converter = ImageEnhance.Brightness(img)
-            img = converter.enhance(bright)
-        
-        # Contrast
-        contrast = float(self.contrast_var.get())
-        if contrast != 1.0:
-            converter = ImageEnhance.Contrast(img)
-            img = converter.enhance(contrast)
-        
-        # Exposure (simulated)
+        # 1. Exposure
         exposure = float(self.exposure_var.get())
         if exposure != 0:
             factor = np.power(2, exposure)
             converter = ImageEnhance.Brightness(img)
             img = converter.enhance(factor)
         
-        # Blacks and Whites adjustment
+        # 2. Highlights and Shadows
+        highlights = float(self.highlights_var.get())
+        shadows = float(self.shadows_var.get())
+        if highlights != 0 or shadows != 0:
+            img = self.adjust_highlights_shadows(img, highlights, shadows)
+            
+        # 3. Contrast, Brightness (using PIL)
+        contrast = float(self.contrast_var.get())
+        if contrast != 1.0:
+            converter = ImageEnhance.Contrast(img)
+            img = converter.enhance(contrast)
+            
+        bright = float(self.brightness_var.get())
+        if bright != 1.0:
+            converter = ImageEnhance.Brightness(img)
+            img = converter.enhance(bright)
+
+        # 4. Blacks and Whites adjustment
         blacks = float(self.blacks_var.get())
         whites = float(self.whites_var.get())
         if blacks != 0 or whites != 0:
             img = self.adjust_levels(img, blacks, whites)
         
-        # Apply filters
+        # 5. Color adjustments (Hue, Tint, Saturation, Vibrance)
+        
+        # Hue
+        hue_shift = float(self.hue_var.get())
+        if hue_shift != 0:
+            img = self.adjust_hue(img, hue_shift)
+            
+        # Tint (Green/Magenta)
+        tint = float(self.tint_var.get())
+        if tint != 0:
+            img = self.adjust_tint(img, tint)
+            
+        # Vibrance (must come before Saturation for proper effect)
+        vibrance = float(self.vibrance_var.get())
+        if vibrance != 0:
+            img = self.adjust_vibrance(img, vibrance)
+        
+        # Saturation (final control)
+        sat = float(self.saturation_var.get())
+        if sat != 1.0:
+            converter = ImageEnhance.Color(img)
+            img = converter.enhance(sat)
+            
+        # 6. Filters
+        
         # Blur
         blur = float(self.blur_var.get())
         if blur > 0:
@@ -527,8 +569,121 @@ class AdvancedImageProcessor(tk.Tk):
         
         return img
     
+    def adjust_hue(self, img, shift_degrees):
+        """Shift the hue of the image (0 to 360 degrees)"""
+        # Convert to HSV (or HSL, but PIL uses HSL for color ops)
+        img_hsv = img.convert('HSV')
+        img_array = np.array(img_hsv, dtype=np.uint8)
+        
+        # PIL's 'H' is 0-255, where 255 = 360 degrees.
+        # Shift degrees is -180 to 180, so we scale it.
+        shift_pil_units = int(shift_degrees * (255 / 360)) % 256
+        
+        # Get the H channel (index 0)
+        hue_channel = img_array[:,:,0]
+        
+        # Apply the circular shift
+        new_hue = (hue_channel.astype(np.int16) + shift_pil_units) % 256
+        
+        # Update array
+        img_array[:,:,0] = new_hue.astype(np.uint8)
+        
+        # Convert back to RGBA
+        return Image.fromarray(img_array, mode='HSV').convert('RGBA')
+        
+    def adjust_tint(self, img, tint_value):
+        """Adjust the Green/Magenta tint. tint_value is -100 to 100."""
+        img_rgb = img.convert('RGB')
+        img_array = np.array(img_rgb, dtype=np.int16) # Use int16 to handle potential overflow/underflow
+        
+        # Normalize adjustment factor to a small fraction, e.g., max 50 units (out of 255)
+        # 100 slider value = 50 unit change.
+        adj_factor = tint_value / 100.0 * 50
+        
+        # Positive tint = Magenta. Boost R and B, reduce G.
+        # Negative tint = Green. Boost G, reduce R and B.
+        
+        # R and B channels (index 0 and 2) get the positive factor
+        img_array[:,:,0] = np.clip(img_array[:,:,0] + adj_factor, 0, 255)
+        img_array[:,:,2] = np.clip(img_array[:,:,2] + adj_factor, 0, 255)
+        
+        # G channel (index 1) gets the opposite factor
+        img_array[:,:,1] = np.clip(img_array[:,:,1] - adj_factor, 0, 255)
+        
+        return Image.fromarray(img_array.astype('uint8'), mode='RGB').convert('RGBA')
+    
+    def adjust_vibrance(self, img, vibrance_value):
+        """
+        Adjust vibrance, selectively boosting saturation of less saturated pixels.
+        vibrance_value is -100 to 100.
+        """
+        if vibrance_value == 0:
+            return img
+
+        img_rgb = img.convert('RGB')
+        factor = vibrance_value / 100.0 * 0.5 
+        
+        img_list = img_rgb.getdata()
+        
+        def adjust_vibrance_pixel(r, g, b, factor):
+            # Convert to HSV (normalized 0-1)
+            h, s, v = colorsys.rgb_to_hsv(r/255.0, g/255.0, b/255.0)
+            
+            # Vibrance adjustment logic:
+            # 1 - s gives a higher weight to low-saturation pixels.
+            # 1.5 power provides a stronger curve.
+            adjustment = factor * (1 - s)**1.5
+            new_s = np.clip(s + adjustment, 0, 1)
+            
+            # Convert back to RGB
+            r_out, g_out, b_out = colorsys.hsv_to_rgb(h, new_s, v)
+            return (int(r_out * 255), int(g_out * 255), int(b_out * 255))
+        
+        # Apply the function to all pixels
+        new_img_list = [adjust_vibrance_pixel(r, g, b, factor) for r, g, b in img_list]
+
+        # Create new image from the list
+        new_img = Image.new('RGB', img_rgb.size)
+        new_img.putdata(new_img_list)
+        return new_img.convert('RGBA')
+
+    
+    def adjust_highlights_shadows(self, img, highlights, shadows):
+        """Adjust highlights and shadows using a curve-like method"""
+        img_array = np.array(img.convert('RGB')) / 255.0  # Normalize to 0-1
+        
+        # Calculate Luminance (L)
+        luminance = 0.2126 * img_array[:,:,0] + 0.7152 * img_array[:,:,1] + 0.0722 * img_array[:,:,2]
+        
+        # Shadows adjustment
+        if shadows != 0:
+            # Map shadows (low luminance values) to a multiplier. 
+            # sigmoid function helps create a smooth roll-off.
+            # The closer to 0, the higher the mask value (up to 1).
+            shadow_mask = 1 / (1 + np.exp( (luminance - 0.25) / 0.1 ))
+            shadow_adj = (shadows / 100.0) * shadow_mask * 0.5 
+            
+            # Apply to image
+            for i in range(3):
+                img_array[:,:,i] = np.clip(img_array[:,:,i] + shadow_adj, 0, 1)
+                
+        # Highlights adjustment
+        if highlights != 0:
+            # Map highlights (high luminance values) to a multiplier
+            # The closer to 1, the higher the mask value (up to 1).
+            highlight_mask = 1 / (1 + np.exp( (0.75 - luminance) / 0.1 ))
+            highlight_adj = (highlights / 100.0) * highlight_mask * 0.5
+            
+            # Apply to image
+            for i in range(3):
+                img_array[:,:,i] = np.clip(img_array[:,:,i] + highlight_adj, 0, 1)
+
+        # Convert back to PIL image
+        return Image.fromarray((img_array * 255).astype(np.uint8), mode='RGB').convert('RGBA')
+
+    
     def adjust_levels(self, img, blacks, whites):
-        """Adjust black and white levels"""
+        """Adjust black and white levels (as originally implemented)"""
         img_array = np.array(img)
         
         # Adjust blacks (shadows)
@@ -814,9 +969,13 @@ class AdvancedImageProcessor(tk.Tk):
         if img is None:
             return
 
-        # Set maximum display dimensions to prevent GUI breaking
-        max_display_width = 800
-        max_display_height = 600
+        # Get current size of the center frame
+        try:
+            max_display_width = self.center_frame.winfo_width() - 20 # Padding
+            max_display_height = self.center_frame.winfo_height() - 20 # Padding
+        except:
+            max_display_width = 800
+            max_display_height = 600
 
         # Calculate display size
         display_width = img.width
