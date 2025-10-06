@@ -167,15 +167,6 @@ class AdvancedImageProcessor(tk.Tk):
 
         ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
-        # Translation
-        ttk.Label(scrollable_frame, text="Translation", style='Header.TLabel').pack(pady=5)
-        self._add_slider_with_entry(scrollable_frame, "Translate X", 'translate_x', -200, 200, 0, 
-                        lambda v: self.update_transform('translate_x', v))
-        self._add_slider_with_entry(scrollable_frame, "Translate Y", 'translate_y', -200, 200, 0, 
-                        lambda v: self.update_transform('translate_y', v))
-
-        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
-
         # Scale
         ttk.Label(scrollable_frame, text="Scale", style='Header.TLabel').pack(pady=5)
         self._add_slider_with_entry(scrollable_frame, "Scale X (%)", 'scale_x', 10, 200, 100, 
@@ -184,16 +175,7 @@ class AdvancedImageProcessor(tk.Tk):
                         lambda v: self.update_transform('scale_y', v))
 
         ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
-
-        # Shear
-        ttk.Label(scrollable_frame, text="Shear", style='Header.TLabel').pack(pady=5)
-        self._add_slider_with_entry(scrollable_frame, "Shear X", 'shear_x', -45, 45, 0, 
-                        lambda v: self.update_transform('shear_x', v))
-        self._add_slider_with_entry(scrollable_frame, "Shear Y", 'shear_y', -45, 45, 0, 
-                        lambda v: self.update_transform('shear_y', v))
-
-        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
-
+        
         # Reflection
         ttk.Label(scrollable_frame, text="Reflection", style='Header.TLabel').pack(pady=5)
         ttk.Button(scrollable_frame, text="Flip Horizontal", 
@@ -982,18 +964,6 @@ class AdvancedImageProcessor(tk.Tk):
         if rotate_angle != 0:
             img = img.rotate(rotate_angle, expand=True, resample=Image.Resampling.BICUBIC)
         
-        # Apply translation
-        translate_x = self.transform_values['translate_x']
-        translate_y = self.transform_values['translate_y']
-        if translate_x != 0 or translate_y != 0:
-            img = ImageOps.exif_transpose(img)
-            img = img.transform(
-                img.size, 
-                Image.AFFINE, 
-                (1, 0, translate_x, 0, 1, translate_y),
-                resample=Image.Resampling.BICUBIC
-            )
-        
         # Apply scale
         scale_x = self.transform_values['scale_x'] / 100.0
         scale_y = self.transform_values['scale_y'] / 100.0
@@ -1001,24 +971,6 @@ class AdvancedImageProcessor(tk.Tk):
             new_width = int(img.width * scale_x)
             new_height = int(img.height * scale_y)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Apply shear
-        shear_x = np.radians(self.transform_values['shear_x'])
-        shear_y = np.radians(self.transform_values['shear_y'])
-        if shear_x != 0 or shear_y != 0:
-            a = 1
-            b = np.tan(shear_x)
-            c = 0
-            d = np.tan(shear_y)
-            e = 1
-            f = 0
-            
-            img = img.transform(
-                img.size,
-                Image.AFFINE,
-                (a, b, c, d, e, f),
-                resample=Image.Resampling.BICUBIC
-            )
         
         self.current_image = img
         self.update_image_preview()
