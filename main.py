@@ -1,38 +1,20 @@
-"""
-TO DO
-Add Gen AI API CALL (BELUM)
-Add Hue Slider (done)
-Add Highlight Slider (done)
-Add Shadow Slider (done)
-Add Tint Slider (done)
-Add Vibrance Slider (done)
-
-Cara run  :
-1. Install dependencies:
-   pip install pillow numpy opencv-python matplotlib
-2. Run the script:
-   python main.py
-3. Make sure using python 3.7 or above
---Ricky Wijaya
-"""
-
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk, ImageFilter, ImageOps, ImageEnhance, ImageDraw
 import numpy as np
 import cv2
-#import requests
+import requests
 from io import BytesIO
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import colorsys
+from collections import deque
 
 class AdvancedImageProcessor(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("BLALR - Advanced Image Processor")
+        self.title("BALR - Advanced Image Processor")
         self.geometry("1400x800")
         self.minsize(1200, 700)
         self.maxsize(1920, 1080)
@@ -46,6 +28,10 @@ class AdvancedImageProcessor(tk.Tk):
         self.original_image = None
         self.current_image = None
         self.preview_image_tk = None
+        
+        # Undo/Redo functionality
+        self.undo_stack = deque(maxlen=5)  # Maximum 5 undo steps
+        self.redo_stack = deque(maxlen=5)  # Maximum 5 redo steps
         
         # Transform values
         self.transform_values = {
@@ -64,11 +50,29 @@ class AdvancedImageProcessor(tk.Tk):
         
         # API Key for image generation (user will need to provide)
         self.api_key = ""
+        # Prompt for AI image generation
+        self.prompt = ""
+
+        # Color adjustment variables
+        self.exposure_var = tk.DoubleVar(value=0)
+        self.highlights_var = tk.DoubleVar(value=0)
+        self.shadows_var = tk.DoubleVar(value=0)
+        self.contrast_var = tk.DoubleVar(value=0)
+        self.brightness_var = tk.DoubleVar(value=0)
+        self.blacks_var = tk.DoubleVar(value=0)
+        self.whites_var = tk.DoubleVar(value=0)
+        self.hue_var = tk.DoubleVar(value=0)
+        self.tint_var = tk.DoubleVar(value=0)
+        self.saturation_var = tk.DoubleVar(value=0)
+        self.temperature_var = tk.DoubleVar(value=0)
+        self.vibrance_var = tk.DoubleVar(value=0)
+        self.blur_var = tk.DoubleVar(value=0)
+        self.noise_var = tk.DoubleVar(value=0)
+        self.vignette_var = tk.DoubleVar(value=0)
         
         self._build_ui()
         
     def _setup_dark_theme(self):
-        """Setup dark theme for the application"""
         self.style.configure('TFrame', background='#2b2b2b')
         self.style.configure('TLabel', background='#2b2b2b', foreground='white')
         self.style.configure('TLabelframe', background='#2b2b2b', foreground='white')
@@ -111,7 +115,6 @@ class AdvancedImageProcessor(tk.Tk):
         self._build_right_panel()
         
     def _build_toolbar(self, parent):
-        """Build top toolbar"""
         toolbar = ttk.Frame(parent)
         toolbar.pack(fill=tk.X, padx=5, pady=5)
         
@@ -120,6 +123,10 @@ class AdvancedImageProcessor(tk.Tk):
         ttk.Button(toolbar, text="Save", command=self.save_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Generate AI Image", command=self.generate_ai_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Reset", command=self.reset_image).pack(side=tk.LEFT, padx=2)
+        
+        # Undo/Redo buttons
+        ttk.Button(toolbar, text="Undo", command=self.undo).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Redo", command=self.redo).pack(side=tk.LEFT, padx=2)
         
         # Status
         self.status_label = ttk.Label(toolbar, text="No image loaded", style='Header.TLabel')
@@ -211,67 +218,93 @@ class AdvancedImageProcessor(tk.Tk):
         notebook.pack(fill=tk.BOTH, expand=True)
         
         # ========================
-        # COLOR TAB
+        # BASIC ADJUSTMENT TAB
         # ========================
         color_frame = ttk.Frame(notebook)
-        notebook.add(color_frame, text="Color")
-        
-        # Create scrollable frame
-        canvas = tk.Canvas(color_frame, bg='#2b2b2b', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(color_frame, orient="vertical", command=canvas.yview)
+        notebook.add(color_frame, text="Basic")
+
+        # Create a frame that will contain both the canvas and scrollbar
+        color_container = ttk.Frame(color_frame)
+        color_container.pack(fill=tk.BOTH, expand=True)
+
+        # Create canvas and scrollbar
+        canvas = tk.Canvas(color_container, bg='#2b2b2b', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(color_container, orient="vertical", command=canvas.yview)
+
+        # Create the scrollable frame
         scrollable_frame = ttk.Frame(canvas)
-        
+
+        # Configure the canvas scrolling
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        
+
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+
         # ========= COLOR ADJUSTMENTS =========
-        ttk.Label(scrollable_frame, text="Color Adjustments", style='Header.TLabel').pack(pady=5)
-        
-        self.exposure_var = self._add_slider_with_entry(scrollable_frame, "Exposure", 'exposure', -2, 2, 0, 
-                                             self._adjust_preview)
-        
-        # Highlights and Shadows
-        self.highlights_var = self._add_slider_with_entry(scrollable_frame, "Highlights", 'highlights', -100, 100, 0, 
-                                           self._adjust_preview)
-        self.shadows_var = self._add_slider_with_entry(scrollable_frame, "Shadows", 'shadows', -100, 100, 0, 
-                                           self._adjust_preview)
-        
-        self.contrast_var = self._add_slider_with_entry(scrollable_frame, "Contrast", 'contrast', 0.2, 2, 1, 
-                                             self._adjust_preview)
-        self.brightness_var = self._add_slider_with_entry(scrollable_frame, "Brightness", 'brightness', 0.2, 2, 1, 
-                                               self._adjust_preview)
-        self.blacks_var = self._add_slider_with_entry(scrollable_frame, "Blacks", 'blacks', -100, 100, 0, 
-                                           self._adjust_preview)
-        self.whites_var = self._add_slider_with_entry(scrollable_frame, "Whites", 'whites', -100, 100, 0, 
-                                           self._adjust_preview)
-        
-        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
-        
-        # Hue, Tint, and Vibrance
-        self.hue_var = self._add_slider_with_entry(scrollable_frame, "Hue", 'hue', -180, 180, 0, 
-                                               self._adjust_preview)
-        self.tint_var = self._add_slider_with_entry(scrollable_frame, "Tint (G/M)", 'tint', -100, 100, 0, 
-                                               self._adjust_preview) # New Tint Slider
-        self.saturation_var = self._add_slider_with_entry(scrollable_frame, "Saturation", 'saturation', 0, 2, 1, 
-                                               self._adjust_preview)
-        self.vibrance_var = self._add_slider_with_entry(scrollable_frame, "Vibrance", 'vibrance', -100, 100, 0, 
-                                               self._adjust_preview) # New Vibrance Slider
-        
+        self._add_slider_with_entry(scrollable_frame, "Exposure", 'exposure', -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(scrollable_frame, "Highlights", 'highlights', -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(scrollable_frame, "Shadows", 'shadows', -100, 100, 0, self._adjust_preview)
+
+        self._add_slider_with_entry(scrollable_frame, "Contrast", 'contrast', -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(scrollable_frame, "Brightness", 'brightness', -100, 100, 0, self._adjust_preview)
+
+        self._add_slider_with_entry(scrollable_frame, "Blacks", 'blacks', -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(scrollable_frame, "Whites", 'whites', -100, 100, 0, self._adjust_preview)
+
+        # Pack canvas and scrollbar in the container
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+
+        # Make sure the canvas can expand
+        color_container.pack_propagate(False)
         
+        # ========================
+        # COLOR ADJUSTMENT TAB
+        # ========================
+        color_frame = ttk.Frame(notebook)
+        notebook.add(color_frame, text="Color")
+
+        # Create a frame that will contain both the canvas and scrollbar
+        color_container = ttk.Frame(color_frame)
+        color_container.pack(fill=tk.BOTH, expand=True)
+
+        # Create canvas and scrollbar
+        canvas = tk.Canvas(color_container, bg='#2b2b2b', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(color_container, orient="vertical", command=canvas.yview)
+
+        # Create the scrollable frame
+        scrollable_frame = ttk.Frame(canvas)
+
+        # Configure the canvas scrolling
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        
+        self._add_slider_with_entry(scrollable_frame, "Hue", 'hue', -180, 180, 0, self._adjust_preview)
+        self._add_slider_with_entry(scrollable_frame, "Tint (G/M)", 'tint', -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(scrollable_frame, "Saturation", 'saturation', -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(scrollable_frame, "Temperature", 'temperature', -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(scrollable_frame, "Vibrance", 'vibrance', -100, 100, 0, self._adjust_preview)
+
+        # Pack canvas and scrollbar in the container
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Make sure the canvas can expand
+        color_container.pack_propagate(False)
         # ========================
         # MORPHOLOGY TAB
         # ========================
         morph_frame = ttk.Frame(notebook)
         notebook.add(morph_frame, text="Morphology")
-        
-        ttk.Label(morph_frame, text="Morphological Operations", style='Header.TLabel').pack(pady=10)
-        
         ttk.Label(morph_frame, text="Kernel Size:").pack(pady=5)
         self.kernel_size_var = tk.IntVar(value=3)
         kernel_frame = ttk.Frame(morph_frame)
@@ -303,12 +336,9 @@ class AdvancedImageProcessor(tk.Tk):
         # ========================
         filter_frame = ttk.Frame(notebook)
         notebook.add(filter_frame, text="Filters")
-        
-        ttk.Label(filter_frame, text="Filter Effects", style='Header.TLabel').pack(pady=10)
-        
-        self.blur_var = self._add_slider_with_entry(filter_frame, "Blur", 'blur', 0, 20, 0, self._adjust_preview)
-        self.noise_var = self._add_slider_with_entry(filter_frame, "Noise", 'noise', 0, 100, 0, self._adjust_preview)
-        self.vignette_var = self._add_slider_with_entry(filter_frame, "Vignette", 'vignette', 0, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(filter_frame, "Blur", 'blur', 0, 20, 0, self._adjust_preview)
+        self._add_slider_with_entry(filter_frame, "Noise", 'noise', 0, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(filter_frame, "Vignette", 'vignette', 0, 100, 0, self._adjust_preview)
         
         ttk.Separator(filter_frame, orient='horizontal').pack(fill=tk.X, pady=10)
         
@@ -324,13 +354,58 @@ class AdvancedImageProcessor(tk.Tk):
         ttk.Button(filter_frame, text="Sharpen", 
                   command=lambda: self.apply_filter('sharpen')).pack(fill=tk.X, padx=10, pady=2)
 
+        # ========================
+        # FREQUENCY TAB
+        # ========================
+        filter_frame = ttk.Frame(notebook)
+        notebook.add(filter_frame, text="Frequency")
+        
+        # ========================
+        # Enchanment TAB
+        # ========================
+        filter_frame = ttk.Frame(notebook)
+        notebook.add(filter_frame, text="Enchanment")
         
     def _add_slider_with_entry(self, parent, label, key, min_val, max_val, default, command):
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.X, padx=10, pady=5)
 
         ttk.Label(frame, text=label).pack(anchor=tk.W)
-        var = tk.DoubleVar(value=default)
+        
+        # Get the correct variable based on key
+        if key == 'exposure':
+            var = self.exposure_var
+        elif key == 'highlights':
+            var = self.highlights_var
+        elif key == 'shadows':
+            var = self.shadows_var
+        elif key == 'contrast':
+            var = self.contrast_var
+        elif key == 'brightness':
+            var = self.brightness_var
+        elif key == 'blacks':
+            var = self.blacks_var
+        elif key == 'whites':
+            var = self.whites_var
+        elif key == 'hue':
+            var = self.hue_var
+        elif key == 'tint':
+            var = self.tint_var
+        elif key == 'saturation':
+            var = self.saturation_var
+        elif key == 'temperature':
+            var = self.temperature_var
+        elif key == 'vibrance':
+            var = self.vibrance_var
+        elif key == 'blur':
+            var = self.blur_var
+        elif key == 'noise':
+            var = self.noise_var
+        elif key == 'vignette':
+            var = self.vignette_var
+        else:
+            # For transform sliders
+            var = tk.DoubleVar(value=default)
 
         slider_frame = ttk.Frame(frame)
         slider_frame.pack(fill=tk.X)
@@ -384,13 +459,11 @@ class AdvancedImageProcessor(tk.Tk):
         self.hist_ax = fig.add_subplot(111)
         self.hist_ax.set_facecolor('#2b2b2b')
         self.hist_ax.tick_params(colors='white')
-        self.hist_ax.set_title("Histogram", color='white')
 
         self.hist_canvas = FigureCanvasTkAgg(fig, master=hist_frame)
         self.hist_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def _update_histogram(self, img=None):
-        """Update histogram for the current image"""
         if img is None:
             img = self.current_image
         if img is None:
@@ -408,48 +481,128 @@ class AdvancedImageProcessor(tk.Tk):
         self.hist_ax.set_title("Histogram", color='white')
         self.hist_canvas.draw_idle()
 
-
+    # ============================
+    # UNDO/REDO FUNCTIONALITY
+    # ============================
+    
+    def save_state(self):
+        """Save current image state to undo stack"""
+        if self.current_image is not None:
+            # Convert to bytes for efficient storage
+            img_bytes = BytesIO()
+            self.current_image.save(img_bytes, format='PNG')
+            img_bytes.seek(0)
+            
+            # Save to undo stack
+            self.undo_stack.append(img_bytes)
+            
+            # Clear redo stack when new action is performed
+            self.redo_stack.clear()
+            
+            # Update status
+            self._update_undo_redo_status()
+    
+    def undo(self):
+        """Undo the last operation"""
+        if len(self.undo_stack) > 1:  # Keep at least one state (original)
+            # Save current state to redo stack
+            if self.current_image is not None:
+                img_bytes = BytesIO()
+                self.current_image.save(img_bytes, format='PNG')
+                img_bytes.seek(0)
+                self.redo_stack.append(img_bytes)
+            
+            # Restore previous state
+            previous_state = self.undo_stack.pop()
+            self.current_image = Image.open(previous_state).convert('RGBA')
+            self.update_image_preview()
+            
+            # Update status
+            self._update_undo_redo_status()
+        else:
+            messagebox.showinfo("Info", "Nothing to undo")
+    
+    def redo(self):
+        """Redo the last undone operation"""
+        if self.redo_stack:
+            # Save current state to undo stack
+            if self.current_image is not None:
+                img_bytes = BytesIO()
+                self.current_image.save(img_bytes, format='PNG')
+                img_bytes.seek(0)
+                self.undo_stack.append(img_bytes)
+            
+            # Restore next state
+            next_state = self.redo_stack.pop()
+            self.current_image = Image.open(next_state).convert('RGBA')
+            self.update_image_preview()
+            
+            # Update status
+            self._update_undo_redo_status()
+        else:
+            messagebox.showinfo("Info", "Nothing to redo")
+    
+    def _update_undo_redo_status(self):
+        """Update status label with undo/redo information"""
+        undo_count = len(self.undo_stack) - 1  # Don't count current state
+        redo_count = len(self.redo_stack)
+        
+        status_parts = []
+        if hasattr(self, 'status_label') and self.status_label['text'] != "No image loaded":
+            base_status = self.status_label['text'].split(' | ')[0]
+            status_parts.append(base_status)
+        
+        if undo_count > 0:
+            status_parts.append(f"Undo: {undo_count}/5")
+        if redo_count > 0:
+            status_parts.append(f"Redo: {redo_count}/5")
+        
+        if status_parts:
+            self.status_label.config(text=" | ".join(status_parts))
     
     def generate_ai_image(self):
-        """Generate AI image using API"""
-        if not self.api_key:
-            self.api_key = simpledialog.askstring("API Key", 
-                                                  "Enter your image generation API key:")
-            if not self.api_key:
-                return
-        
-        prompt = simpledialog.askstring("AI Image Generation", 
+        prompt = simpledialog.askstring("AI Image Generation with Pollinations", 
                                         "Enter your image prompt:")
         if not prompt:
             return
-        
-        messagebox.showinfo("Note", 
-                           "AI image generation requires a valid API endpoint.\n" +
-                           "This is a placeholder for integration with services like:\n" +
-                           "- DALL-E 2/3\n- Stable Diffusion\n- Midjourney API")
-        
-        # Placeholder: Create a sample generated image
-        # In real implementation, you would call the API here
-        width, height = 512, 512
-        img = Image.new('RGB', (width, height))
-        draw = ImageDraw.Draw(img)
-        
-        # Create gradient as placeholder
-        for i in range(height):
-            color = int(255 * (i / height))
-            draw.rectangle([0, i, width, i+1], fill=(color, 100, 255-color))
-        
-        draw.text((width//2 - 100, height//2), "AI Generated\n(Placeholder)", 
-                 fill='white')
-        
-        self.original_image = img
-        self.current_image = img.copy()
-        self.reset_all_sliders()
-        self.update_image_preview()
-        self.status_label.config(text=f"Generated AI image: {width}x{height}")
+
+        try:
+            # Update status
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text="Generating AI image... please wait.")
+                self.status_label.update_idletasks()
+    
+            base_url = "https://image.pollinations.ai/prompt/"
+            prompt_encoded = requests.utils.quote(prompt)
+            url = f"{base_url}{prompt_encoded}?width=512&height=512&model=flux"
+
+            response = requests.get(url, timeout=60)
+            response.raise_for_status()
+
+            img_data = BytesIO(response.content)
+            img = Image.open(img_data).convert("RGB")
+
+            # Update the app image states
+            self.original_image = img
+            self.current_image = img.copy()
+            
+            # Save initial state for undo
+            self.save_state()
+
+            if hasattr(self, 'reset_all_sliders'):
+                self.reset_all_sliders()
+            if hasattr(self, 'update_image_preview'):
+                self.update_image_preview()
+
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=f"AI generated image from: '{prompt}'")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate image:\n{e}")
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text="AI image generation failed.")
     
     def open_image(self):
-        """Open an image file"""
         path = filedialog.askopenfilename(
             filetypes=[("Image files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tiff")]
         )
@@ -460,6 +613,12 @@ class AdvancedImageProcessor(tk.Tk):
             img = Image.open(path).convert('RGBA')
             self.original_image = img
             self.current_image = img.copy()
+            
+            # Clear undo/redo stacks and save initial state
+            self.undo_stack.clear()
+            self.redo_stack.clear()
+            self.save_state()
+            
             self.reset_all_sliders()
             self.update_image_preview()
             self.status_label.config(text=f"Loaded: {os.path.basename(path)} ({img.width}x{img.height})")
@@ -467,7 +626,6 @@ class AdvancedImageProcessor(tk.Tk):
             messagebox.showerror("Error", f"Failed to open image:\n{e}")
     
     def save_image(self):
-        """Save the current image"""
         if self.current_image is None:
             messagebox.showwarning("Warning", "No image to save")
             return
@@ -489,88 +647,85 @@ class AdvancedImageProcessor(tk.Tk):
             messagebox.showerror("Error", f"Failed to save image:\n{e}")
     
     def apply_all_adjustments(self):
-        """Apply all current adjustments to the image"""
         if self.current_image is None:
             return None
-        
+            
+        # Start with the current image (which has geometric transforms applied)
         img = self.current_image.copy()
-        
-        # --- ORDER MATTERS FOR PHOTO EDITING ---
         
         # 1. Exposure
         exposure = float(self.exposure_var.get())
         if exposure != 0:
-            factor = np.power(2, exposure)
-            converter = ImageEnhance.Brightness(img)
-            img = converter.enhance(factor)
-        
-        # 2. Highlights and Shadows
+            factor = np.power(2, exposure / 100)  # normalize exposure
+            img = ImageEnhance.Brightness(img).enhance(factor)
+
+        # 2. Highlights & Shadows
         highlights = float(self.highlights_var.get())
         shadows = float(self.shadows_var.get())
         if highlights != 0 or shadows != 0:
             img = self.adjust_highlights_shadows(img, highlights, shadows)
-            
-        # 3. Contrast, Brightness (using PIL)
-        contrast = float(self.contrast_var.get())
-        if contrast != 1.0:
-            converter = ImageEnhance.Contrast(img)
-            img = converter.enhance(contrast)
-            
-        bright = float(self.brightness_var.get())
-        if bright != 1.0:
-            converter = ImageEnhance.Brightness(img)
-            img = converter.enhance(bright)
 
-        # 4. Blacks and Whites adjustment
+        # 3. Contrast & Brightness
+        contrast = float(self.contrast_var.get())
+        brightness = float(self.brightness_var.get())
+        if contrast != 0:
+            img = ImageEnhance.Contrast(img).enhance(1 + (contrast / 100))
+        if brightness != 0:
+            img = ImageEnhance.Brightness(img).enhance(1 + (brightness / 100))
+
+        # 4. Blacks & Whites
         blacks = float(self.blacks_var.get())
         whites = float(self.whites_var.get())
         if blacks != 0 or whites != 0:
             img = self.adjust_levels(img, blacks, whites)
-        
-        # 5. Color adjustments (Hue, Tint, Saturation, Vibrance)
-        
-        # Hue
+
+        # 5. Color adjustments
         hue_shift = float(self.hue_var.get())
+        tint = float(self.tint_var.get())
+        vibrance = float(self.vibrance_var.get())
+        saturation = float(self.saturation_var.get())
+        temperature = float(self.temperature_var.get())
+
         if hue_shift != 0:
             img = self.adjust_hue(img, hue_shift)
-            
-        # Tint (Green/Magenta)
-        tint = float(self.tint_var.get())
         if tint != 0:
             img = self.adjust_tint(img, tint)
-            
-        # Vibrance (must come before Saturation for proper effect)
-        vibrance = float(self.vibrance_var.get())
         if vibrance != 0:
             img = self.adjust_vibrance(img, vibrance)
-        
-        # Saturation (final control)
-        sat = float(self.saturation_var.get())
-        if sat != 1.0:
-            converter = ImageEnhance.Color(img)
-            img = converter.enhance(sat)
-            
+        if saturation != 0:
+            img = ImageEnhance.Color(img).enhance(1 + (saturation / 100))
+        if temperature != 0:
+            img = self.adjust_temperature(img, temperature)
+
         # 6. Filters
-        
-        # Blur
         blur = float(self.blur_var.get())
+        noise = float(self.noise_var.get())
+        vignette = float(self.vignette_var.get())
+
         if blur > 0:
             img = img.filter(ImageFilter.GaussianBlur(radius=blur))
-        
-        # Noise
-        noise = float(self.noise_var.get())
         if noise > 0:
             img = self.add_noise(img, noise)
-        
-        # Vignette
-        vignette = float(self.vignette_var.get())
         if vignette > 0:
             img = self.add_vignette(img, vignette / 100)
-        
+
         return img
+
+    def adjust_temperature(self, img, temperature):
+        img_array = np.array(img.convert('RGB'), dtype=np.float32)
+        
+        # Temperature adjustment: positive = warmer (more red/yellow), negative = cooler (more blue)
+        if temperature > 0:
+            # Warmer: increase red, slight increase in green
+            img_array[:,:,0] = np.clip(img_array[:,:,0] + temperature * 2.55, 0, 255)
+            img_array[:,:,1] = np.clip(img_array[:,:,1] + temperature * 1.27, 0, 255)
+        else:
+            # Cooler: increase blue
+            img_array[:,:,2] = np.clip(img_array[:,:,2] - temperature * 2.55, 0, 255)
+        
+        return Image.fromarray(img_array.astype('uint8'), mode='RGB').convert('RGBA')
     
     def adjust_hue(self, img, shift_degrees):
-        """Shift the hue of the image (0 to 360 degrees)"""
         # Convert to HSV (or HSL, but PIL uses HSL for color ops)
         img_hsv = img.convert('HSV')
         img_array = np.array(img_hsv, dtype=np.uint8)
@@ -592,7 +747,6 @@ class AdvancedImageProcessor(tk.Tk):
         return Image.fromarray(img_array, mode='HSV').convert('RGBA')
         
     def adjust_tint(self, img, tint_value):
-        """Adjust the Green/Magenta tint. tint_value is -100 to 100."""
         img_rgb = img.convert('RGB')
         img_array = np.array(img_rgb, dtype=np.int16) # Use int16 to handle potential overflow/underflow
         
@@ -613,10 +767,6 @@ class AdvancedImageProcessor(tk.Tk):
         return Image.fromarray(img_array.astype('uint8'), mode='RGB').convert('RGBA')
     
     def adjust_vibrance(self, img, vibrance_value):
-        """
-        Adjust vibrance, selectively boosting saturation of less saturated pixels.
-        vibrance_value is -100 to 100.
-        """
         if vibrance_value == 0:
             return img
 
@@ -649,7 +799,6 @@ class AdvancedImageProcessor(tk.Tk):
 
     
     def adjust_highlights_shadows(self, img, highlights, shadows):
-        """Adjust highlights and shadows using a curve-like method"""
         img_array = np.array(img.convert('RGB')) / 255.0  # Normalize to 0-1
         
         # Calculate Luminance (L)
@@ -683,7 +832,6 @@ class AdvancedImageProcessor(tk.Tk):
 
     
     def adjust_levels(self, img, blacks, whites):
-        """Adjust black and white levels (as originally implemented)"""
         img_array = np.array(img)
         
         # Adjust blacks (shadows)
@@ -703,14 +851,12 @@ class AdvancedImageProcessor(tk.Tk):
         return Image.fromarray(img_array.astype('uint8'), mode=img.mode)
     
     def add_noise(self, img, amount):
-        """Add noise to image"""
         arr = np.array(img)
         noise = np.random.normal(0, amount, arr.shape).astype(np.int16)
         noisy = np.clip(arr.astype(np.int16) + noise, 0, 255).astype(np.uint8)
         return Image.fromarray(noisy, mode=img.mode)
     
     def add_vignette(self, img, strength):
-        """Add vignette effect"""
         width, height = img.size
         
         # Create radial gradient
@@ -731,7 +877,6 @@ class AdvancedImageProcessor(tk.Tk):
         return Image.fromarray(img_array.astype('uint8'), mode=img.mode)
     
     def apply_morphology(self, operation):
-        """Apply morphological operations"""
         if self.current_image is None:
             return
         
@@ -739,6 +884,16 @@ class AdvancedImageProcessor(tk.Tk):
         img_array = np.array(self.current_image.convert('RGB'))
         kernel_size = int(self.kernel_size_var.get())
         kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        # Ask user for confirmation
+        confirm = messagebox.askyesno(
+            "Apply Filter",
+            f"Are you sure you want to apply the '{operation}' filter?"
+        )
+        if not confirm:
+            return
+        
+        # Save state before applying filter
+        self.save_state()
         
         # Apply operation to each channel
         result = np.zeros_like(img_array)
@@ -760,11 +915,22 @@ class AdvancedImageProcessor(tk.Tk):
         self.update_image_preview()
     
     def apply_filter(self, filter_name):
-        """Apply various filters"""
+        
         if self.current_image is None:
             return
         
         img = self.current_image
+
+        # Ask user for confirmation
+        confirm = messagebox.askyesno(
+            "Apply Filter",
+            f"Are you sure you want to apply the '{filter_name}' filter?"
+        )
+        if not confirm:
+            return
+            
+        # Save state before applying filter
+        self.save_state()
         
         if filter_name == 'grayscale':
             img = ImageOps.grayscale(img).convert('RGBA')
@@ -781,7 +947,6 @@ class AdvancedImageProcessor(tk.Tk):
         self.update_image_preview()
     
     def apply_sepia(self, img):
-        """Apply sepia tone effect"""
         img_array = np.array(img.convert('RGB'))
         
         # Sepia transformation matrix
@@ -795,12 +960,10 @@ class AdvancedImageProcessor(tk.Tk):
         return Image.fromarray(sepia_img, mode='RGB').convert('RGBA')
     
     def update_transform(self, transform_type, value):
-        """Update transform values and preview"""
         self.transform_values[transform_type] = float(value)
         self.apply_transforms()
     
     def apply_transforms(self):
-        """Apply all geometric transforms"""
         if self.original_image is None:
             return
         
@@ -861,10 +1024,12 @@ class AdvancedImageProcessor(tk.Tk):
         self.update_image_preview()
     
     def interactive_crop(self):
-        """Start interactive cropping mode"""
         if self.current_image is None:
             messagebox.showwarning("Warning", "No image loaded")
             return
+        
+        # Save state before cropping
+        self.save_state()
         
         # Create cropping window
         crop_window = tk.Toplevel(self)
@@ -947,6 +1112,9 @@ class AdvancedImageProcessor(tk.Tk):
         if self.current_image is None:
             return
         
+        # Save state before reflection
+        self.save_state()
+        
         if direction == 'horizontal':
             self.current_image = ImageOps.mirror(self.current_image)
         elif direction == 'vertical':
@@ -955,6 +1123,7 @@ class AdvancedImageProcessor(tk.Tk):
         self.update_image_preview()
     
     def _adjust_preview(self, value=None):
+        """Apply color adjustments and update preview"""
         if self.current_image is None:
             return
         img = self.apply_all_adjustments()
@@ -962,6 +1131,7 @@ class AdvancedImageProcessor(tk.Tk):
         self._update_histogram(img)
     
     def update_image_preview(self, img=None):
+        """Update the image display with optional custom image"""
         self._update_histogram(img)
         if img is None:
             img = self.current_image
@@ -1004,7 +1174,6 @@ class AdvancedImageProcessor(tk.Tk):
         self.image_label.configure(image=self.preview_image_tk)
     
     def reset_image(self):
-        """Reset image to original state"""
         if self.original_image is not None:
             self.current_image = self.original_image.copy()
             self.reset_all_sliders()
@@ -1026,6 +1195,23 @@ class AdvancedImageProcessor(tk.Tk):
         # Reset all slider widgets
         for key, (slider, entry, var, default) in self.slider_widgets.items():
             var.set(default)
+        
+        # Reset color adjustment variables
+        self.exposure_var.set(0)
+        self.highlights_var.set(0)
+        self.shadows_var.set(0)
+        self.contrast_var.set(0)
+        self.brightness_var.set(0)
+        self.blacks_var.set(0)
+        self.whites_var.set(0)
+        self.hue_var.set(0)
+        self.tint_var.set(0)
+        self.saturation_var.set(0)
+        self.temperature_var.set(0)
+        self.vibrance_var.set(0)
+        self.blur_var.set(0)
+        self.noise_var.set(0)
+        self.vignette_var.set(0)
     
     def run(self):
         self.mainloop()
