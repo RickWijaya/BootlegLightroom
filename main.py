@@ -162,7 +162,10 @@ class AdvancedImageProcessor(tk.Tk):
     
         ttk.Button(scrollable_transform, text="Crop (Interactive)",
                     command=self.interactive_crop).pack(fill=tk.X, padx=5, pady=2)
-    
+
+        ttk.Button(scrollable_transform, text="Draw / Annotate (Interactive)",
+                   command=self.interactive_draw).pack(fill=tk.X, padx=5, pady=2)
+
         self._add_slider_with_entry(scrollable_transform, "Scale X (%)", 'scale_x', 10, 200, 100,
                         lambda v: self.update_transform('scale_x', v))
         self._add_slider_with_entry(scrollable_transform, "Scale Y (%)", 'scale_y', 10, 200, 100,
@@ -1132,7 +1135,222 @@ class AdvancedImageProcessor(tk.Tk):
         instructions = ttk.Label(crop_window, text="Click and drag to select crop area, release to apply", 
                                 background='#2b2b2b', foreground='white')
         instructions.pack(pady=5)
-    
+
+    def interactive_draw(self):
+        """Interactive drawing popup — optimized, with working color picker and text size."""
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded")
+            return
+
+        # Save pre-draw state for undo
+        self.save_state()
+
+        draw_window = tk.Toplevel(self)
+        draw_window.title("Interactive Drawing & Annotation")
+        draw_window.geometry("900x700")
+        draw_window.configure(bg="#2b2b2b")
+
+        # Full-size working copy (real image) and scaled preview
+        working_img = self.current_image.convert("RGBA").copy()
+        preview_img = working_img.copy()
+        preview_img.thumbnail((800, 600), Image.Resampling.LANCZOS)
+
+        self.draw_preview_img = preview_img
+        self.draw_preview_tk = ImageTk.PhotoImage(preview_img)
+
+        canvas = tk.Canvas(draw_window, bg="#404040", cursor="crosshair")
+        canvas.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # initial create - actual center drawing happens in refresh
+        canvas.create_image(450, 350, image=self.draw_preview_tk, anchor=tk.CENTER)
+
+        # ===== Toolbar =====
+        toolbar = ttk.Frame(draw_window)
+        toolbar.pack(fill=tk.X, pady=5)
+
+        self.drawing_tool = tk.StringVar(value="freehand")
+        self.draw_color = "#ff0000"
+        self.brush_size = tk.IntVar(value=3)
+        self.text_to_add = tk.StringVar(value="Sample Text")
+        self.text_size = tk.IntVar(value=36)  # default text size
+
+        # Tools radio buttons
+        for tool in ["freehand", "line", "rectangle", "circle", "text", "fill"]:
+            ttk.Radiobutton(toolbar, text=tool.title(),
+                            variable=self.drawing_tool, value=tool).pack(side=tk.LEFT, padx=4)
+
+        # Brush size
+        ttk.Label(toolbar, text="Brush:").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Spinbox(toolbar, from_=1, to=50, textvariable=self.brush_size, width=4).pack(side=tk.LEFT, padx=4)
+
+        # Color swatch + button
+        color_swatch = tk.Canvas(toolbar, width=28, height=18, highlightthickness=1)
+        color_swatch.create_rectangle(0, 0, 28, 18, fill=self.draw_color, outline="black")
+        color_swatch.pack(side=tk.LEFT, padx=(8, 4))
+        ttk.Button(toolbar, text="Color", command=lambda: self.pick_color(draw_window, color_swatch)).pack(side=tk.LEFT)
+
+        # Text input and size
+        ttk.Entry(toolbar, textvariable=self.text_to_add, width=20).pack(side=tk.LEFT, padx=6)
+        ttk.Label(toolbar, text="Text size:").pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Spinbox(toolbar, from_=8, to=200, textvariable=self.text_size, width=5).pack(side=tk.LEFT, padx=4)
+
+        # Apply / Cancel
+        ttk.Button(toolbar, text="Apply",
+                   command=lambda: self._apply_direct_drawing(working_img, draw_window)).pack(side=tk.RIGHT, padx=6)
+        ttk.Button(toolbar, text="Cancel", command=draw_window.destroy).pack(side=tk.RIGHT)
+
+        # ===== Drawing setup =====
+        draw_layer = Image.new("RGBA", working_img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(draw_layer)
+
+        scale_x = working_img.width / preview_img.width
+        scale_y = working_img.height / preview_img.height
+        self._draw_layer = draw_layer
+        self._working_img = working_img
+
+        self.last_point = None
+        self._refresh_pending = False
+        self._temp_shape = None
+
+        def canvas_to_image_coords(x, y):
+            # Map canvas coords to original image coords (account for centered preview)
+            offset_x = (canvas.winfo_width() - preview_img.width) // 2
+            offset_y = (canvas.winfo_height() - preview_img.height) // 2
+            return int((x - offset_x) * scale_x), int((y - offset_y) * scale_y)
+
+        def refresh_preview_debounced():
+            """Throttled preview updater for smoother drawing."""
+            if self._refresh_pending:
+                return
+            self._refresh_pending = True
+
+            def _update():
+                merged = Image.alpha_composite(working_img, draw_layer)
+                preview = merged.copy()
+                preview.thumbnail((800, 600), Image.Resampling.LANCZOS)
+                self.draw_preview_tk = ImageTk.PhotoImage(preview)
+                canvas.delete("all")
+                canvas.create_image(canvas.winfo_width() / 2, canvas.winfo_height() / 2,
+                                    image=self.draw_preview_tk, anchor=tk.CENTER)
+                self._refresh_pending = False
+
+            canvas.after(50, _update)  # redraw ~20fps
+
+        def on_press(e):
+            self.last_point = (e.x, e.y)
+            tool = self.drawing_tool.get()
+            if tool == "text":
+                ix, iy = canvas_to_image_coords(e.x, e.y)
+                font = self._get_font(self.text_size.get())
+                draw.text((ix, iy), self.text_to_add.get(), fill=self.draw_color, font=font)
+                refresh_preview_debounced()
+            elif tool == "fill":
+                ix, iy = canvas_to_image_coords(e.x, e.y)
+                self._bucket_fill(draw_layer, ix, iy, self.draw_color)
+                refresh_preview_debounced()
+
+        def on_drag(e):
+            tool = self.drawing_tool.get()
+            if not self.last_point:
+                return
+
+            if tool == "freehand":
+                x1, y1 = canvas_to_image_coords(*self.last_point)
+                x2, y2 = canvas_to_image_coords(e.x, e.y)
+                draw.line((x1, y1, x2, y2), fill=self.draw_color, width=self.brush_size.get())
+                self.last_point = (e.x, e.y)
+                refresh_preview_debounced()
+
+            elif tool in ("rectangle", "circle", "line"):
+                if self._temp_shape:
+                    canvas.delete(self._temp_shape)
+                if tool == "rectangle":
+                    self._temp_shape = canvas.create_rectangle(self.last_point[0], self.last_point[1], e.x, e.y,
+                                                               outline=self.draw_color, width=self.brush_size.get())
+                elif tool == "circle":
+                    self._temp_shape = canvas.create_oval(self.last_point[0], self.last_point[1], e.x, e.y,
+                                                          outline=self.draw_color, width=self.brush_size.get())
+                elif tool == "line":
+                    self._temp_shape = canvas.create_line(self.last_point[0], self.last_point[1], e.x, e.y,
+                                                          fill=self.draw_color, width=self.brush_size.get())
+
+        def on_release(e):
+            tool = self.drawing_tool.get()
+            if tool in ("rectangle", "circle", "line"):
+                x1, y1 = canvas_to_image_coords(*self.last_point)
+                x2, y2 = canvas_to_image_coords(e.x, e.y)
+                if tool == "rectangle":
+                    draw.rectangle([x1, y1, x2, y2], outline=self.draw_color, width=self.brush_size.get())
+                elif tool == "circle":
+                    draw.ellipse([x1, y1, x2, y2], outline=self.draw_color, width=self.brush_size.get())
+                elif tool == "line":
+                    draw.line([x1, y1, x2, y2], fill=self.draw_color, width=self.brush_size.get())
+                refresh_preview_debounced()
+                if self._temp_shape:
+                    canvas.delete(self._temp_shape)
+            self.last_point = None
+
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_drag)
+        canvas.bind("<ButtonRelease-1>", on_release)
+
+    def pick_color(self, parent, swatch_widget=None):
+        """Open color chooser and update swatch + active color."""
+        from tkinter import colorchooser
+        color = colorchooser.askcolor(title="Choose Color", parent=parent)
+        if color and color[1]:
+            self.draw_color = color[1]  # e.g. "#rrggbb"
+            if swatch_widget is not None:
+                swatch_widget.delete("all")
+                swatch_widget.create_rectangle(0, 0, 28, 18, fill=self.draw_color, outline="black")
+
+    def _get_font(self, size):
+        """Return a PIL.ImageFont (try common TTFs, fall back to default)."""
+        from PIL import ImageFont
+        candidates = ["arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"]
+        for f in candidates:
+            try:
+                return ImageFont.truetype(f, size)
+            except Exception:
+                continue
+        # fallback: default font (size won't change)
+        return ImageFont.load_default()
+
+    def _apply_direct_drawing(self, working_img, window):
+        """Merge drawn layer directly with image and save state."""
+        if hasattr(self, "_draw_layer"):
+            merged = Image.alpha_composite(working_img.convert("RGBA"), self._draw_layer.convert("RGBA"))
+            self.current_image = merged
+            self.update_image_preview()
+            # Save the new state so Undo works
+            self.save_state()
+        window.destroy()
+
+    def _bucket_fill(self, img, x, y, color):
+        """Fast flood fill using NumPy (works on RGBA Image pasted as array)."""
+        import numpy as np
+        pixels = np.array(img)  # shape (h, w, 4)
+        h, w = pixels.shape[:2]
+        if not (0 <= x < w and 0 <= y < h):
+            return
+
+        target = pixels[y, x].copy()
+        # parse color "#rrggbb" to RGBA
+        fill_rgb = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+        fill = np.array(fill_rgb + [255], dtype=np.uint8)
+
+        if np.all(target == fill):
+            return
+
+        mask = np.zeros((h, w), dtype=bool)
+        stack = [(x, y)]
+        while stack:
+            cx, cy = stack.pop()
+            if 0 <= cx < w and 0 <= cy < h and not mask[cy, cx] and np.all(pixels[cy, cx] == target):
+                mask[cy, cx] = True
+                stack.extend([(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)])
+        pixels[mask] = fill
+        img.paste(Image.fromarray(pixels, "RGBA"))
+
     def reflect(self, direction):
         """Apply reflection (flip)"""
         if self.current_image is None:
