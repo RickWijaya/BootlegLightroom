@@ -183,6 +183,28 @@ class AdvancedImageProcessor(tk.Tk):
         ttk.Button(scrollable_frame, text="Flip Vertical", 
                   command=lambda: self.reflect('vertical')).pack(fill=tk.X, padx=5, pady=2)
 
+        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
+
+        # Perspective Transform Section
+        ttk.Label(scrollable_frame, text="Perspective Transform", style='Header.TLabel').pack(pady=5)
+
+        corners = ["Top Left X", "Top Left Y", "Top Right X", "Top Right Y",
+                   "Bottom Left X", "Bottom Left Y", "Bottom Right X", "Bottom Right Y"]
+
+        # Initialize transform_values for perspective
+        self.perspective_values = {c: 0 for c in corners}
+
+        for key in corners:
+            self._add_slider_with_entry(
+                scrollable_frame, key, key,
+                -1000, 1000, 0,
+                lambda v, k=key: self.update_perspective(k, v)
+            )
+
+        ttk.Button(scrollable_frame, text="Apply Perspective",
+                   command=self.apply_perspective).pack(fill=tk.X, padx=5, pady=5)
+
+
         # Pack canvas and scrollbar
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -693,6 +715,54 @@ class AdvancedImageProcessor(tk.Tk):
 
         return img
 
+    def update_perspective(self, key, value):
+        """Update the perspective corner value"""
+        self.perspective_values[key] = float(value)
+        # Live preview
+        self.apply_perspective(preview=True)
+
+    def apply_perspective(self, preview=False):
+        """Apply perspective transform using current corner values"""
+        if self.original_image is None:
+            return
+
+        img = np.array(self.original_image.convert("RGB"))
+        h, w = img.shape[:2]
+
+        # Define original corners (rectangle)
+        src_pts = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
+
+        # Get user offsets
+        tl_x = self.perspective_values["Top Left X"]
+        tl_y = self.perspective_values["Top Left Y"]
+        tr_x = self.perspective_values["Top Right X"]
+        tr_y = self.perspective_values["Top Right Y"]
+        bl_x = self.perspective_values["Bottom Left X"]
+        bl_y = self.perspective_values["Bottom Left Y"]
+        br_x = self.perspective_values["Bottom Right X"]
+        br_y = self.perspective_values["Bottom Right Y"]
+
+        # Destination points
+        dst_pts = np.float32([
+            [0 + tl_x, 0 + tl_y],
+            [w + tr_x, 0 + tr_y],
+            [0 + bl_x, h + bl_y],
+            [w + br_x, h + br_y]
+        ])
+
+        # Compute transform matrix and warp
+        M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+        warped = cv2.warpPerspective(img, M, (w, h))
+
+        result = Image.fromarray(warped).convert("RGBA")
+        self.current_image = result
+        self.update_image_preview(result)
+
+        # Save to undo stack only when user presses the button
+        if not preview:
+            self.save_state()
+
+
     def adjust_temperature(self, img, temperature):
         img_array = np.array(img.convert('RGB'), dtype=np.float32)
         
@@ -1164,7 +1234,10 @@ class AdvancedImageProcessor(tk.Tk):
         self.blur_var.set(0)
         self.noise_var.set(0)
         self.vignette_var.set(0)
-    
+        if hasattr(self, "perspective_values"):
+            for k in self.perspective_values:
+                self.perspective_values[k] = 0
+
     def run(self):
         self.mainloop()
 
