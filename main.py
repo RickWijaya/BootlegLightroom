@@ -111,85 +111,109 @@ class AdvancedImageProcessor(tk.Tk):
         self._build_right_panel()
         
     def _build_toolbar(self, parent):
-        toolbar = ttk.Frame(parent)
-        toolbar.pack(fill=tk.X, padx=5, pady=5)
-        
-        # File operations
+        toolbar = ttk.Frame(parent, relief="raised", borderwidth=2)
+        toolbar.pack(fill=tk.X, padx=10, pady=10)
+
         ttk.Button(toolbar, text="Open", command=self.open_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Save", command=self.save_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Generate AI Image", command=self.generate_ai_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Reset", command=self.reset_image).pack(side=tk.LEFT, padx=2)
-        
-        # Undo/Redo buttons
+
         ttk.Button(toolbar, text="Undo", command=self.undo).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Redo", command=self.redo).pack(side=tk.LEFT, padx=2)
-        
-        # Status
+
         self.status_label = ttk.Label(toolbar, text="No image loaded", style='Header.TLabel')
         self.status_label.pack(side=tk.RIGHT, padx=10)
         
     def _build_left_panel(self):
-        # Main left panel frame (single frame, no notebook)
-        left_frame = ttk.Frame(self.left_panel)
-        left_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Create scrollable frame for transform controls
-        canvas = tk.Canvas(left_frame, bg='#2b2b2b', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-
-        scrollable_frame.bind(
+        # Create a notebook inside the left panel
+        notebook = ttk.Notebook(self.left_panel)
+        notebook.pack(fill=tk.BOTH, expand=True)
+    
+        # ========================
+        # TRANSFORM TAB
+        # ========================
+        transform_frame = ttk.Frame(notebook)
+        notebook.add(transform_frame, text="Transform")
+    
+        # Scrollable container for transform controls
+        transform_container = ttk.Frame(transform_frame)
+        transform_container.pack(fill=tk.BOTH, expand=True)
+    
+        canvas_t = tk.Canvas(transform_container, bg='#2b2b2b', highlightthickness=0)
+        scrollbar_t = ttk.Scrollbar(transform_container, orient="vertical", command=canvas_t.yview)
+        scrollable_transform = ttk.Frame(canvas_t)
+    
+        scrollable_transform.bind(
             "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            lambda e: canvas_t.configure(scrollregion=canvas_t.bbox("all"))
         )
-
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        # Transform controls (all content from before)
-
-        # Resize
-        self._add_slider_with_entry(scrollable_frame, "Resize (%)", 'resize', 10, 200, 100, 
+        canvas_t.create_window((0, 0), window=scrollable_transform, anchor="nw")
+        canvas_t.configure(yscrollcommand=scrollbar_t.set)
+    
+        canvas_t.pack(side="left", fill="both", expand=True)
+        scrollbar_t.pack(side="right", fill="y")
+    
+        # ========== Transform Controls ==========
+        self._add_slider_with_entry(scrollable_transform, "Resize (%)", 'resize', 10, 200, 100,
                         lambda v: self.update_transform('resize', v))
-
-        # Rotate
-        self._add_slider_with_entry(scrollable_frame, "Rotate (°)", 'rotate', -180, 180, 0, 
+        self._add_slider_with_entry(scrollable_transform, "Rotate (°)", 'rotate', -180, 180, 0,
                         lambda v: self.update_transform('rotate', v))
-
-        # Crop button
-        ttk.Button(scrollable_frame, text="Crop (Interactive)", 
-                  command=self.interactive_crop).pack(fill=tk.X, padx=5, pady=2)
-
-        # Scale
-        self._add_slider_with_entry(scrollable_frame, "Scale X (%)", 'scale_x', 10, 200, 100, 
+    
+        ttk.Button(scrollable_transform, text="Crop (Interactive)",
+                    command=self.interactive_crop).pack(fill=tk.X, padx=5, pady=2)
+    
+        self._add_slider_with_entry(scrollable_transform, "Scale X (%)", 'scale_x', 10, 200, 100,
                         lambda v: self.update_transform('scale_x', v))
-        self._add_slider_with_entry(scrollable_frame, "Scale Y (%)", 'scale_y', 10, 200, 100, 
+        self._add_slider_with_entry(scrollable_transform, "Scale Y (%)", 'scale_y', 10, 200, 100,
                         lambda v: self.update_transform('scale_y', v))
-        
-        # Reflection
-        ttk.Button(scrollable_frame, text="Flip Horizontal", 
-                  command=lambda: self.reflect('horizontal')).pack(fill=tk.X, padx=5, pady=2)
-        ttk.Button(scrollable_frame, text="Flip Vertical", 
-                  command=lambda: self.reflect('vertical')).pack(fill=tk.X, padx=5, pady=2)
-
-        # Perspective Transform Section
-        ttk.Label(scrollable_frame, text="Perspective Transform", style='Header.TLabel').pack(pady=5)
-
-        corners = ["Top Left X", "Top Left Y", "Top Right X", "Top Right Y",
-                   "Bottom Left X", "Bottom Left Y", "Bottom Right X", "Bottom Right Y"]
-
-        # Initialize transform_values for perspective
+    
+        ttk.Button(scrollable_transform, text="Flip Horizontal",
+                    command=lambda: self.reflect('horizontal')).pack(fill=tk.X, padx=5, pady=2)
+        ttk.Button(scrollable_transform, text="Flip Vertical",
+                    command=lambda: self.reflect('vertical')).pack(fill=tk.X, padx=5, pady=2)
+    
+        # ========================
+        # PERSPECTIVE TAB
+        # ========================
+        perspective_frame = ttk.Frame(notebook)
+        notebook.add(perspective_frame, text="Perspective")
+    
+        # Scrollable container for perspective controls
+        perspective_container = ttk.Frame(perspective_frame)
+        perspective_container.pack(fill=tk.BOTH, expand=True)
+    
+        canvas_p = tk.Canvas(perspective_container, bg='#2b2b2b', highlightthickness=0)
+        scrollbar_p = ttk.Scrollbar(perspective_container, orient="vertical", command=canvas_p.yview)
+        scrollable_perspective = ttk.Frame(canvas_p)
+    
+        scrollable_perspective.bind(
+            "<Configure>",
+            lambda e: canvas_p.configure(scrollregion=canvas_p.bbox("all"))
+        )
+        canvas_p.create_window((0, 0), window=scrollable_perspective, anchor="nw")
+        canvas_p.configure(yscrollcommand=scrollbar_p.set)
+    
+        canvas_p.pack(side="left", fill="both", expand=True)
+        scrollbar_p.pack(side="right", fill="y")
+    
+        # ========== Perspective Controls ==========
+        ttk.Label(scrollable_perspective, text="Perspective Transform", style='Header.TLabel').pack(pady=5)
+    
+        corners = [
+            "Top Left X", "Top Left Y", "Top Right X", "Top Right Y",
+            "Bottom Left X", "Bottom Left Y", "Bottom Right X", "Bottom Right Y"
+        ]
+    
         self.perspective_values = {c: 0 for c in corners}
-
+    
         for key in corners:
             self._add_slider_with_entry(
-                scrollable_frame, key, key,
+                scrollable_perspective, key, key,
                 -1000, 1000, 0,
                 lambda v, k=key: self.update_perspective(k, v)
             )
-        # Pack canvas and scrollbar
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+
 
         
     def _build_center_panel(self):
