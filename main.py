@@ -37,12 +37,8 @@ class AdvancedImageProcessor(tk.Tk):
         self.transform_values = {
             'resize': 100,
             'rotate': 0,
-            'translate_x': 0,
-            'translate_y': 0,
             'scale_x': 100,
             'scale_y': 100,
-            'shear_x': 0,
-            'shear_y': 0
         }
         
         # Store slider references for reset
@@ -151,7 +147,6 @@ class AdvancedImageProcessor(tk.Tk):
         canvas.configure(yscrollcommand=scrollbar.set)
 
         # Transform controls (all content from before)
-        ttk.Label(scrollable_frame, text="Basic Transforms", style='Header.TLabel').pack(pady=5)
 
         # Resize
         self._add_slider_with_entry(scrollable_frame, "Resize (%)", 'resize', 10, 200, 100, 
@@ -165,25 +160,17 @@ class AdvancedImageProcessor(tk.Tk):
         ttk.Button(scrollable_frame, text="Crop (Interactive)", 
                   command=self.interactive_crop).pack(fill=tk.X, padx=5, pady=2)
 
-        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
-
         # Scale
-        ttk.Label(scrollable_frame, text="Scale", style='Header.TLabel').pack(pady=5)
         self._add_slider_with_entry(scrollable_frame, "Scale X (%)", 'scale_x', 10, 200, 100, 
                         lambda v: self.update_transform('scale_x', v))
         self._add_slider_with_entry(scrollable_frame, "Scale Y (%)", 'scale_y', 10, 200, 100, 
                         lambda v: self.update_transform('scale_y', v))
-
-        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
         
         # Reflection
-        ttk.Label(scrollable_frame, text="Reflection", style='Header.TLabel').pack(pady=5)
         ttk.Button(scrollable_frame, text="Flip Horizontal", 
                   command=lambda: self.reflect('horizontal')).pack(fill=tk.X, padx=5, pady=2)
         ttk.Button(scrollable_frame, text="Flip Vertical", 
                   command=lambda: self.reflect('vertical')).pack(fill=tk.X, padx=5, pady=2)
-
-        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
         # Perspective Transform Section
         ttk.Label(scrollable_frame, text="Perspective Transform", style='Header.TLabel').pack(pady=5)
@@ -200,11 +187,6 @@ class AdvancedImageProcessor(tk.Tk):
                 -1000, 1000, 0,
                 lambda v, k=key: self.update_perspective(k, v)
             )
-
-        ttk.Button(scrollable_frame, text="Apply Perspective",
-                   command=self.apply_perspective).pack(fill=tk.X, padx=5, pady=5)
-
-
         # Pack canvas and scrollbar
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -716,13 +698,11 @@ class AdvancedImageProcessor(tk.Tk):
         return img
 
     def update_perspective(self, key, value):
-        """Update the perspective corner value"""
         self.perspective_values[key] = float(value)
         # Live preview
         self.apply_perspective(preview=True)
 
     def apply_perspective(self, preview=False):
-        """Apply perspective transform using current corner values"""
         if self.original_image is None:
             return
 
@@ -1206,12 +1186,8 @@ class AdvancedImageProcessor(tk.Tk):
         self.transform_values = {
             'resize': 100,
             'rotate': 0,
-            'translate_x': 0,
-            'translate_y': 0,
             'scale_x': 100,
             'scale_y': 100,
-            'shear_x': 0,
-            'shear_y': 0
         }
         
         # Reset all slider widgets
