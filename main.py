@@ -343,7 +343,15 @@ class AdvancedImageProcessor(tk.Tk):
                   command=lambda: self.apply_morphology('closing')).pack(fill=tk.X, padx=10, pady=2)
         ttk.Button(morph_frame, text="Gradient", 
                   command=lambda: self.apply_morphology('gradient')).pack(fill=tk.X, padx=10, pady=2)
-        
+        ttk.Button(morph_frame, text="Mean Filter", 
+                  command=lambda: self.apply_morphology('mean_filter')).pack(fill=tk.X, padx=10, pady=2)
+        ttk.Button(morph_frame, text="Median Filter",
+                  command=lambda: self.apply_morphology('median_filter')).pack(fill=tk.X, padx=10, pady=2)
+        ttk.Button(morph_frame, text="Max Filter",
+                  command=lambda: self.apply_morphology('max_filter')).pack(fill=tk.X, padx=10, pady=2)
+        ttk.Button(morph_frame, text="Min Filter",
+                  command=lambda: self.apply_morphology('min_filter')).pack(fill=tk.X, padx=10, pady=2)
+
         # ========================
         # FILTER TAB
         # ========================
@@ -366,7 +374,13 @@ class AdvancedImageProcessor(tk.Tk):
                   command=lambda: self.apply_filter('emboss')).pack(fill=tk.X, padx=10, pady=2)
         ttk.Button(filter_frame, text="Sharpen", 
                   command=lambda: self.apply_filter('sharpen')).pack(fill=tk.X, padx=10, pady=2)
-
+        ttk.Button(filter_frame, text="Sobel", 
+                  command=lambda: self.apply_filter('sobel')).pack(fill=tk.X, padx=10, pady=2)
+        ttk.Button(filter_frame, text="Prewitt", 
+                  command=lambda: self.apply_filter('prewitt')).pack(fill=tk.X, padx=10, pady=2)
+        ttk.Button(filter_frame, text="Laplacian", 
+                  command=lambda: self.apply_filter('laplacian')).pack(fill=tk.X, padx=10, pady=2)
+        
         # ========================
         # FREQUENCY TAB
         # ========================
@@ -938,48 +952,65 @@ class AdvancedImageProcessor(tk.Tk):
     def apply_morphology(self, operation):
         if self.current_image is None:
             return
-        
+        self.save_state()
         # Convert to numpy array
         img_array = np.array(self.current_image.convert('RGB'))
         kernel_size = int(self.kernel_size_var.get())
-        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+
         # Ask user for confirmation
         confirm = messagebox.askyesno(
             "Apply Filter",
-            f"Are you sure you want to apply the '{operation}' filter?"
+            f"Are you sure you want to apply the '{operation}' filter with kernel size {kernel_size}?"
         )
         if not confirm:
             return
-        
-        # Save state before applying filter
-        self.save_state()
-        
+
         # Apply operation to each channel
         result = np.zeros_like(img_array)
         for i in range(3):
             channel = img_array[:,:,i]
-            
+
             if operation == 'erosion':
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
                 result[:,:,i] = cv2.erode(channel, kernel, iterations=1)
             elif operation == 'dilation':
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
                 result[:,:,i] = cv2.dilate(channel, kernel, iterations=1)
             elif operation == 'opening':
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
                 result[:,:,i] = cv2.morphologyEx(channel, cv2.MORPH_OPEN, kernel)
             elif operation == 'closing':
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
                 result[:,:,i] = cv2.morphologyEx(channel, cv2.MORPH_CLOSE, kernel)
             elif operation == 'gradient':
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
                 result[:,:,i] = cv2.morphologyEx(channel, cv2.MORPH_GRADIENT, kernel)
-        
+            elif operation == 'mean_filter':
+                # Mean filter using box filter
+                result[:,:,i] = cv2.blur(channel, (kernel_size, kernel_size))
+            elif operation == 'median_filter':
+                # Median filter - kernel size must be odd
+                ksize = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
+                result[:,:,i] = cv2.medianBlur(channel, ksize)
+            elif operation == 'max_filter':
+                # Max filter (dilation with ones kernel)
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                result[:,:,i] = cv2.dilate(channel, kernel)
+            elif operation == 'min_filter':
+                # Min filter (erosion with ones kernel)
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                result[:,:,i] = cv2.erode(channel, kernel)
+
         self.current_image = Image.fromarray(result, mode='RGB').convert('RGBA')
         self.update_image_preview()
     
     def apply_filter(self, filter_name):
-        
+    
         if self.current_image is None:
             return
-        
-        img = self.current_image
 
+        img = self.current_image
+        self.save_state()
         # Ask user for confirmation
         confirm = messagebox.askyesno(
             "Apply Filter",
@@ -987,10 +1018,7 @@ class AdvancedImageProcessor(tk.Tk):
         )
         if not confirm:
             return
-            
-        # Save state before applying filter
-        self.save_state()
-        
+
         if filter_name == 'grayscale':
             img = ImageOps.grayscale(img).convert('RGBA')
         elif filter_name == 'sepia':
@@ -1001,9 +1029,70 @@ class AdvancedImageProcessor(tk.Tk):
             img = img.filter(ImageFilter.EMBOSS)
         elif filter_name == 'sharpen':
             img = img.filter(ImageFilter.SHARPEN)
-        
+        elif filter_name == 'sobel':
+            img = self.apply_sobel(img)
+        elif filter_name == 'prewitt':
+            img = self.apply_prewitt(img)
+        elif filter_name == 'laplacian':
+            img = self.apply_laplacian(img)
+
         self.current_image = img
         self.update_image_preview()
+
+    def apply_sobel(self, img):
+        # Convert to grayscale first
+        img_gray = img.convert('L')
+        img_array = np.array(img_gray, dtype=np.float32)
+
+        # Apply Sobel operators
+        sobel_x = cv2.Sobel(img_array, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(img_array, cv2.CV_64F, 0, 1, ksize=3)
+
+        # Calculate magnitude
+        magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
+
+        # Normalize to 0-255
+        magnitude = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
+
+        # Convert back to PIL Image
+        return Image.fromarray(magnitude.astype(np.uint8)).convert('RGBA')
+
+    def apply_prewitt(self, img):
+        # Convert to grayscale first
+        img_gray = img.convert('L')
+        img_array = np.array(img_gray, dtype=np.float32)
+
+        # Prewitt kernels
+        kernel_x = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]])
+        kernel_y = np.array([[-1, -1, -1], [0, 0, 0], [1, 1, 1]])
+
+        # Apply Prewitt operators
+        prewitt_x = cv2.filter2D(img_array, cv2.CV_64F, kernel_x)
+        prewitt_y = cv2.filter2D(img_array, cv2.CV_64F, kernel_y)
+
+        # Calculate magnitude
+        magnitude = np.sqrt(prewitt_x**2 + prewitt_y**2)
+
+        # Normalize to 0-255
+        magnitude = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
+
+        # Convert back to PIL Image
+        return Image.fromarray(magnitude.astype(np.uint8)).convert('RGBA')
+
+    def apply_laplacian(self, img):
+        # Convert to grayscale first
+        img_gray = img.convert('L')
+        img_array = np.array(img_gray, dtype=np.float32)
+
+        # Apply Laplacian
+        laplacian = cv2.Laplacian(img_array, cv2.CV_64F, ksize=3)
+
+        # Take absolute value and normalize
+        laplacian = np.absolute(laplacian)
+        laplacian = cv2.normalize(laplacian, None, 0, 255, cv2.NORM_MINMAX)
+
+        # Convert back to PIL Image
+        return Image.fromarray(laplacian.astype(np.uint8)).convert('RGBA')
     
     def apply_sepia(self, img):
         img_array = np.array(img.convert('RGB'))
