@@ -118,9 +118,16 @@ class AdvancedImageProcessor(tk.Tk):
         ttk.Button(toolbar, text="Save", command=self.save_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Generate AI Image", command=self.generate_ai_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Reset", command=self.reset_image).pack(side=tk.LEFT, padx=2)
-
+        ttk.Button(toolbar, text="Remove Background", command=self.remove_background).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Undo", command=self.undo).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Redo", command=self.redo).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Apply Artistic Filter", command=self.apply_artistic_filter).pack(side=tk.LEFT, padx=2)
+        
+        self.filter_var = tk.StringVar(value="Oil Paint")
+        filters = ["Oil Paint", "Watercolor", "Cartoonize", "Pencil Sketch", "Pixelize", "Vivid Pop"]
+        ttk.Label(toolbar, text="Filter:").pack(side=tk.LEFT, padx=5)
+        filter_menu = ttk.OptionMenu(toolbar, self.filter_var, filters[0], *filters)
+        filter_menu.pack(side=tk.LEFT, padx=2)
 
         self.status_label = ttk.Label(toolbar, text="No image loaded", style='Header.TLabel')
         self.status_label.pack(side=tk.RIGHT, padx=10)
@@ -586,6 +593,59 @@ class AdvancedImageProcessor(tk.Tk):
         
         if status_parts:
             self.status_label.config(text=" | ".join(status_parts))
+
+    
+    def remove_background(self):
+
+        API_KEY = "QBNYHoxDwcRozkRNauzuH2Rp"
+
+        # ✅ Check if an image is loaded
+        if not hasattr(self, "original_image") or self.original_image is None:
+            messagebox.showwarning("No Image", "Please open an image first.")
+            return
+
+        try:
+            # Update status to show that it's processing
+            self.status_label.config(text="Removing background... please wait.")
+            self.status_label.update_idletasks()
+
+            # Convert the current image to bytes (in memory)
+            img_bytes = io.BytesIO()
+            self.original_image.save(img_bytes, format="PNG")
+            img_bytes.seek(0)
+
+            # Send the image to remove.bg API
+            response = requests.post(
+                "https://api.remove.bg/v1.0/removebg",
+                files={"image_file": ("image.png", img_bytes, "image/png")},
+                data={"size": "auto"},
+                headers={"X-Api-Key": API_KEY},
+            )
+
+            # Handle response
+            if response.status_code == requests.codes.ok:
+                # Load the processed image directly from memory
+                result_image = Image.open(io.BytesIO(response.content)).convert("RGBA")
+
+                # Replace current image in memory
+                self.original_image = result_image
+                self.current_image = result_image.copy()
+
+                # Reset sliders, refresh preview
+                self.reset_all_sliders()
+                self.update_image_preview()
+
+                # Update status label
+                self.status_label.config(text="✅ Background removed successfully!")
+
+            else:
+                messagebox.showerror("Error", f"Failed to remove background:\n{response.text}")
+                self.status_label.config(text="❌ Background removal failed.")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred:\n{e}")
+            self.status_label.config(text="❌ Error during background removal.")
+
     
     def generate_ai_image(self):
         prompt = simpledialog.askstring("AI Image Generation with Pollinations", 
@@ -628,6 +688,42 @@ class AdvancedImageProcessor(tk.Tk):
             messagebox.showerror("Error", f"Failed to generate image:\n{e}")
             if hasattr(self, 'status_label'):
                 self.status_label.config(text="AI image generation failed.")
+    
+    def apply_artistic_filter(self):
+        if not self.current_image:
+            messagebox.showwarning("No Image", "Please open or generate an image first.")
+            return
+
+        selected_filter = self.filter_var.get()
+        self.save_state()
+        img = self.current_image.copy()
+
+        try:
+            if selected_filter == "Oil Paint":
+                img = img.filter(ImageFilter.ModeFilter(size=7))
+            elif selected_filter == "Watercolor":
+                img = img.filter(ImageFilter.SMOOTH_MORE)
+                img = img.filter(ImageFilter.DETAIL)
+            elif selected_filter == "Cartoonize":
+                img = img.filter(ImageFilter.EDGE_ENHANCE_MORE)
+                img = ImageEnhance.Color(img).enhance(1.8)
+            elif selected_filter == "Pencil Sketch":
+                gray = img.convert("L").filter(ImageFilter.CONTOUR)
+                img = gray.convert("RGB")
+            elif selected_filter == "Pixelize":
+                small = img.resize((64, 64), resample=Image.BILINEAR)
+                img = small.resize(img.size, Image.NEAREST)
+            elif selected_filter == "Vivid Pop":
+                img = ImageEnhance.Color(img).enhance(2.2)
+                img = ImageEnhance.Contrast(img).enhance(1.4)
+
+            self.current_image = img
+            self.update_image_preview()
+            self.status_label.config(text=f"Applied '{selected_filter}' filter")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to apply filter:\n{e}")
+
     
     def open_image(self):
         path = filedialog.askopenfilename(
