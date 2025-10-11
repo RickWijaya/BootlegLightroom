@@ -117,22 +117,23 @@ class AdvancedImageProcessor(tk.Tk):
 
         ttk.Button(toolbar, text="Open", command=self.open_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Save", command=self.save_image).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Generate AI Image", command=self.generate_ai_image).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Reset", command=self.reset_image).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Remove Background", command=self.remove_background).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Undo", command=self.undo).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Redo", command=self.redo).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Apply Artistic Filter", command=self.apply_artistic_filter).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Enhance Image", command=self.enhance_image).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Remove Background", command=self.remove_background).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Generate AI Image", command=self.generate_ai_image).pack(side=tk.LEFT, padx=2)
         
         self.filter_var = tk.StringVar(value="Oil Paint")
         filters = ["Oil Paint", "Watercolor", "Cartoonize", "Pencil Sketch", "Pixelize", "Vivid Pop"]
         ttk.Label(toolbar, text="Filter:").pack(side=tk.LEFT, padx=5)
         filter_menu = ttk.OptionMenu(toolbar, self.filter_var, filters[0], *filters)
         filter_menu.pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Apply Artistic Filter", command=self.apply_artistic_filter).pack(side=tk.LEFT, padx=2)
 
         self.status_label = ttk.Label(toolbar, text="No image loaded", style='Header.TLabel')
         self.status_label.pack(side=tk.RIGHT, padx=10)
-        
+
     def _build_left_panel(self):
         # Create a notebook inside the left panel
         notebook = ttk.Notebook(self.left_panel)
@@ -595,6 +596,67 @@ class AdvancedImageProcessor(tk.Tk):
         if status_parts:
             self.status_label.config(text=" | ".join(status_parts))
 
+    def enhance_image(self):
+        """Enhance the current image using Topaz Labs API."""
+        API_KEY = "46440a95-8bee-4c5f-8fbc-ea9937e33a14"  # your saved API key for Topaz Labs
+
+        # ✅ Check if an image is loaded
+        if not hasattr(self, "original_image") or self.original_image is None:
+            messagebox.showwarning("No Image", "Please open an image first.")
+            return
+
+        try:
+            # Update status to show that it's processing
+            self.status_label.config(text="Enhancing image... please wait.")
+            self.status_label.update_idletasks()
+
+            # Convert the current image to bytes (in memory)
+            img_bytes = io.BytesIO()
+            self.original_image.save(img_bytes, format="PNG")
+            img_bytes.seek(0)
+
+            # Prepare request
+            url = "https://api.topazlabs.com/image/v1/enhance"
+            headers = {
+                "X-API-Key": API_KEY,
+                "accept": "image/jpeg"
+            }
+
+            # Prepare multipart/form-data body
+            files = {
+                "image": ("input.jpg", img_bytes, "image/jpeg")
+            }
+            data = {
+                "model": "Standard V2",
+                "face_enhancement": "true",
+                "face_enhancement_strength": "0.8",
+                "output_format": "jpeg"
+            }
+
+            # Send POST request
+            response = requests.post(url, headers=headers, files=files, data=data)
+
+            # Handle response
+            if response.status_code == 200:
+                # Read the enhanced image directly from memory
+                enhanced_image = Image.open(io.BytesIO(response.content)).convert("RGB")
+
+                # Replace current image in memory
+                self.original_image = enhanced_image
+                self.current_image = enhanced_image.copy()
+
+                # Refresh UI
+                self.reset_all_sliders()
+                self.update_image_preview()
+                self.status_label.config(text="✅ Image enhanced successfully!")
+
+            else:
+                messagebox.showerror("Error", f"Enhancement failed:\n{response.text}")
+                self.status_label.config(text="❌ Enhancement failed.")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred:\n{e}")
+            self.status_label.config(text="❌ Error during enhancement.")
     
     def remove_background(self):
 
