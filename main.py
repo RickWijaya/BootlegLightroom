@@ -527,9 +527,6 @@ class AdvancedImageProcessor(tk.Tk):
 
     def _build_enhancement_tab(self, parent):
         ttk.Label(parent, text="Apply Enhancement Techniques:").pack(anchor="w", padx=10, pady=(4, 6))
-        ttk.Button(parent, text="Auto Enhance", style="Accent.TButton",
-                   command=lambda: self._with_overlay(self._auto_enhance, title="Auto Enhancing...")
-                   ).pack(fill=tk.X, padx=10, pady=4)
         ttk.Button(parent, text="Sharpen", style="Accent.TButton",
                    command=lambda: self._with_overlay(self._sharpen_image, title="Sharpening...")
                    ).pack(fill=tk.X, padx=10, pady=4)
@@ -1832,16 +1829,6 @@ class AdvancedImageProcessor(tk.Tk):
     # =========================
     # ENHANCEMENT
     # =========================
-    def _auto_enhance(self):
-        if self.current_image is None:
-            messagebox.showwarning("Warning", "No image loaded!")
-            return
-        img_enhanced = ImageEnhance.Color(self.current_image).enhance(1.5)
-        img_enhanced = ImageEnhance.Contrast(img_enhanced).enhance(1.3)
-        img_enhanced = ImageEnhance.Brightness(img_enhanced).enhance(1.1)
-        self.current_image = img_enhanced.convert("RGBA")
-        self.update_image_preview(self.current_image)
-        self._update_toolbar_state()
 
     def _sharpen_image(self):
         if self.current_image is None:
