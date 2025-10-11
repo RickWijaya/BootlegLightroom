@@ -1,56 +1,62 @@
+import io
 import os
+import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
-from PIL import Image, ImageTk, ImageFilter, ImageOps, ImageEnhance, ImageDraw
+from PIL import Image, ImageTk, ImageFilter, ImageOps, ImageEnhance, ImageDraw, ImageFont
 import numpy as np
 import cv2
 import requests
-import io
 from io import BytesIO
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import colorsys
 from collections import deque
 
+
+# ===========================================================
+# BALR - Advanced Image Processor (tidy & collapsible panels)
+# ===========================================================
 class AdvancedImageProcessor(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("BALR - Advanced Image Processor")
-        self.geometry("1400x800")
-        self.minsize(1200, 700)
-        self.maxsize(1920, 1080)
-        # Set dark theme
-        self.configure(bg='#2b2b2b')
+        self.geometry("1400x850")
+        self.minsize(1200, 720)
+
+        # base bg
+        self.configure(bg="#0b1220")
+
+        # ttk style
         self.style = ttk.Style()
-        self.style.theme_use('clam')
+        try:
+            self.style.theme_use("clam")
+        except Exception:
+            pass
         self._setup_dark_theme()
-        
-        # Image state
+        self._setup_dpi_awareness()
+
+        # ====== STATE ======
         self.original_image = None
         self.current_image = None
         self.preview_image_tk = None
-        
-        # Undo/Redo functionality
-        self.undo_stack = deque(maxlen=5)  # Maximum 5 undo steps
-        self.redo_stack = deque(maxlen=5)  # Maximum 5 redo steps
-        
+
+        # Undo/Redo (simpan sebagai PNG bytes)
+        self.undo_stack = deque(maxlen=5)
+        self.redo_stack = deque(maxlen=5)
+
         # Transform values
-        self.transform_values = {
-            'resize': 100,
-            'rotate': 0,
-            'scale_x': 100,
-            'scale_y': 100,
-        }
-        
-        # Store slider references for reset
+        self.transform_values = {"resize": 100, "rotate": 0, "scale_x": 100, "scale_y": 100}
+
+        # Store slider refs & debounce map
         self.slider_widgets = {}
-        
-        # API Key for image generation (user will need to provide)
+        self._debounce_after_ids = {}
+
+        # API Key placeholder
         self.api_key = ""
-        # Prompt for AI image generation
         self.prompt = ""
 
-        # Color adjustment variables
+        # Color/adjustment variables
         self.exposure_var = tk.DoubleVar(value=0)
         self.highlights_var = tk.DoubleVar(value=0)
         self.shadows_var = tk.DoubleVar(value=0)
@@ -66,541 +72,567 @@ class AdvancedImageProcessor(tk.Tk):
         self.blur_var = tk.DoubleVar(value=0)
         self.noise_var = tk.DoubleVar(value=0)
         self.vignette_var = tk.DoubleVar(value=0)
-        
-        self._build_ui()
-        
-    def _setup_dark_theme(self):
-        self.style.configure('TFrame', background='#2b2b2b')
-        self.style.configure('TLabel', background='#2b2b2b', foreground='white')
-        self.style.configure('TLabelframe', background='#2b2b2b', foreground='white')
-        self.style.configure('TLabelframe.Label', background='#2b2b2b', foreground='white')
-        self.style.configure('TButton', background='#404040', foreground='white')
-        self.style.map('TButton', background=[('active', '#505050')])
-        self.style.configure('TScale', background='#2b2b2b', troughcolor='#404040')
-        self.style.configure('TEntry', fieldbackground='#404040', foreground='white')
-        self.style.configure('Header.TLabel', font=('Arial', 10, 'bold'))
-        
-    def _build_ui(self):
-        # Main container
-        main_container = ttk.Frame(self)
-        main_container.pack(fill=tk.BOTH, expand=True)
-        
-        # Top toolbar
-        self._build_toolbar(main_container)
-        
-        # Content area
-        content = ttk.Frame(main_container)
-        content.pack(fill=tk.BOTH, expand=True)
-        
-        # Left panel - Tools
-        self.left_panel = ttk.Frame(content, width=320)
-        self.left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
-        self.left_panel.pack_propagate(False)
-        
-        # Center - Image display
-        self.center_frame = ttk.Frame(content)
-        self.center_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
-        
-        # Right panel - Adjustments
-        self.right_panel = ttk.Frame(content, width=320)
-        self.right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
-        self.right_panel.pack_propagate(False)
-        
-        # Setup panels
-        self._build_left_panel()
-        self._build_center_panel()
-        self._build_right_panel()
-        
-    def _build_toolbar(self, parent):
-        toolbar = ttk.Frame(parent, relief="raised", borderwidth=2)
-        toolbar.pack(fill=tk.X, padx=10, pady=10)
 
-        ttk.Button(toolbar, text="Open", command=self.open_image).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Save", command=self.save_image).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Reset", command=self.reset_image).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Undo", command=self.undo).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Redo", command=self.redo).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Enhance Image", command=self.enhance_image).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Remove Background", command=self.remove_background).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Generate AI Image", command=self.generate_ai_image).pack(side=tk.LEFT, padx=2)
-        
+        # Morphology
+        self.kernel_size_var = tk.IntVar(value=3)
+
+        # Perspective values
+        self.perspective_values = {
+            "Top Left X": 0.0, "Top Left Y": 0.0,
+            "Top Right X": 0.0, "Top Right Y": 0.0,
+            "Bottom Left X": 0.0, "Bottom Left Y": 0.0,
+            "Bottom Right X": 0.0, "Bottom Right Y": 0.0,
+        }
+
+        # collapse flags
+        self.left_collapsed = False
+        self.right_collapsed = False
+
+        # Build UI
+        self._overlay = None
+        self._build_ui()
+
+        # resize preview on window resize
+        self.bind("<Configure>", lambda e: self.update_image_preview())
+
+    # =========================
+    # THEME & DPI
+    # =========================
+    def _setup_dark_theme(self):
+        bg = "#0b1220"
+        pane = "#0f1629"
+        fg = "#e6e9ef"
+        soft = "#94a3b8"
+        accent = "#5661b3"
+        accent_hover = "#2ca7a4"
+        accent_press = "#3c537a"
+        tab_bg = "#10182a"
+        tab_sel = "#1a2238"
+
+        self.style.configure("TFrame", background=bg)
+        self.style.configure("Pane.TFrame", background=pane)
+        self.style.configure("TLabel", background=bg, foreground=fg)
+        self.style.configure("TLabelframe", background=bg, foreground=fg)
+        self.style.configure("TLabelframe.Label", background=bg, foreground=fg)
+        self.style.configure("Header.TLabel", font=("Inter", 10, "bold"), foreground="#dce3f0", background="#0e1117")
+
+        # Buttons (ttk)
+        self.style.configure(
+            "Accent.TButton",
+            font=("Inter", 10, "bold"),
+            padding=8,
+            background=accent,
+            foreground="white",
+            borderwidth=0,
+        )
+        self.style.map(
+            "Accent.TButton",
+            background=[("active", accent_hover), ("pressed", accent_press)],
+            relief=[("pressed", "sunken")],
+            foreground=[("disabled", soft)],
+        )
+
+        # Sliders / Entries / Notebook
+        self.style.configure("TScale", background=bg, troughcolor="#273449")
+        self.style.configure("TEntry", fieldbackground="#172033", foreground="white",
+                             insertcolor="white", borderwidth=1)
+        self.style.configure("TNotebook", background=bg, borderwidth=0, tabmargins=(6, 4, 6, 0))
+        self.style.configure("TNotebook.Tab", background=tab_bg, foreground="#e8eefc",
+                             padding=(12, 8), font=("Inter", 9, "bold"))
+        self.style.map("TNotebook.Tab",
+                       background=[("selected", tab_sel)],
+                       foreground=[("selected", "#ffffff")])
+
+    def _setup_dpi_awareness(self):
+        try:
+            if self.tk.call('tk', 'windowingsystem') == 'win32':
+                self.tk.call('tk', 'scaling', self.winfo_fpixels('1i') / 72.0)
+        except Exception:
+            pass
+
+    # =========================
+    # UI BUILD
+    # =========================
+    def _build_ui(self):
+        # ---------- Top bar (HITAM, no glass) ----------
+        topbar = tk.Frame(self, height=56, bg="#0e1117")
+        topbar.pack(fill=tk.X, side=tk.TOP)
+        topbar.pack_propagate(False)
+
+        btn_frame = tk.Frame(topbar, bg="#0e1117")
+        btn_frame.pack(side=tk.LEFT, padx=5, pady=4)
+
+        self.btns = {}
+        def add_btn(key, text, cmd):
+            b = self._create_rounded_button(btn_frame, text=text, command=cmd)
+            b.pack(side=tk.LEFT, padx=8)
+            self.btns[key] = b
+
+        add_btn("open", "Open", self.open_image)
+        add_btn("save", "Save", self.save_image)
+        add_btn("gen", "Generate AI Image", self.generate_ai_image)
+        add_btn("reset", "Reset", self.reset_image)
+        add_btn("undo", "Undo", self.undo)
+        add_btn("redo", "Redo", self.redo)
+        add_btn("enchance" ,"Enchance Image", self.enhance_image)
+        add_btn("remove","Remove Background",self.remove_background)
         self.filter_var = tk.StringVar(value="Oil Paint")
         filters = ["Oil Paint", "Watercolor", "Cartoonize", "Pencil Sketch", "Pixelize", "Vivid Pop"]
-        ttk.Label(toolbar, text="Filter:").pack(side=tk.LEFT, padx=5)
-        filter_menu = ttk.OptionMenu(toolbar, self.filter_var, filters[0], *filters)
+        ttk.Label(topbar, text="Filter:").pack(side=tk.LEFT, padx=5)
+        filter_menu = ttk.OptionMenu(topbar, self.filter_var, filters[0], *filters)
         filter_menu.pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Apply Artistic Filter", command=self.apply_artistic_filter).pack(side=tk.LEFT, padx=2)
+        ttk.Button(topbar, text="Apply Artistic Filter", command=self.apply_artistic_filter).pack(side=tk.LEFT, padx=2)
+        self.status_label = ttk.Label(topbar, text="No image loaded", style="Header.TLabel")
+        self.status_label.pack(side=tk.RIGHT, padx=12)
 
-        self.status_label = ttk.Label(toolbar, text="No image loaded", style='Header.TLabel')
-        self.status_label.pack(side=tk.RIGHT, padx=10)
+        # ---------- Content (5 kolom: left | toggleL | center | toggleR | right) ----------
+        content = tk.Frame(self, bg="#0b1220")
+        content.pack(fill=tk.BOTH, expand=True)
 
-    def _build_left_panel(self):
-        # Create a notebook inside the left panel
-        notebook = ttk.Notebook(self.left_panel)
-        notebook.pack(fill=tk.BOTH, expand=True)
-    
-        # ========================
-        # TRANSFORM TAB
-        # ========================
-        transform_frame = ttk.Frame(notebook)
-        notebook.add(transform_frame, text="Transform")
-    
-        # Scrollable container for transform controls
-        transform_container = ttk.Frame(transform_frame)
-        transform_container.pack(fill=tk.BOTH, expand=True)
-    
-        canvas_t = tk.Canvas(transform_container, bg='#2b2b2b', highlightthickness=0)
-        scrollbar_t = ttk.Scrollbar(transform_container, orient="vertical", command=canvas_t.yview)
-        scrollable_transform = ttk.Frame(canvas_t)
-    
-        scrollable_transform.bind(
-            "<Configure>",
-            lambda e: canvas_t.configure(scrollregion=canvas_t.bbox("all"))
-        )
-        canvas_t.create_window((0, 0), window=scrollable_transform, anchor="nw")
-        canvas_t.configure(yscrollcommand=scrollbar_t.set)
-    
-        canvas_t.pack(side="left", fill="both", expand=True)
-        scrollbar_t.pack(side="right", fill="y")
-    
-        # ========== Transform Controls ==========
-        self._add_slider_with_entry(scrollable_transform, "Resize (%)", 'resize', 10, 200, 100,
-                        lambda v: self.update_transform('resize', v))
-        self._add_slider_with_entry(scrollable_transform, "Rotate (°)", 'rotate', -180, 180, 0,
-                        lambda v: self.update_transform('rotate', v))
-    
-        ttk.Button(scrollable_transform, text="Crop (Interactive)",
-                    command=self.interactive_crop).pack(fill=tk.X, padx=5, pady=2)
+        content.grid_columnconfigure(0, weight=0)  # left
+        content.grid_columnconfigure(1, weight=0)  # left toggle
+        content.grid_columnconfigure(2, weight=1)  # center
+        content.grid_columnconfigure(3, weight=0)  # right toggle
+        content.grid_columnconfigure(4, weight=0)  # right
+        content.grid_rowconfigure(0, weight=1)
 
-        ttk.Button(scrollable_transform, text="Draw / Annotate (Interactive)",
-                   command=self.interactive_draw).pack(fill=tk.X, padx=5, pady=2)
+        # Left panel (scrollable)
+        self.left_wrap = tk.Frame(content, bg="#0b1220")
+        self.left_wrap.grid(row=0, column=0, sticky="ns", padx=(10, 4), pady=10)
 
-        self._add_slider_with_entry(scrollable_transform, "Scale X (%)", 'scale_x', 10, 200, 100,
-                        lambda v: self.update_transform('scale_x', v))
-        self._add_slider_with_entry(scrollable_transform, "Scale Y (%)", 'scale_y', 10, 200, 100,
-                        lambda v: self.update_transform('scale_y', v))
-    
-        ttk.Button(scrollable_transform, text="Flip Horizontal",
-                    command=lambda: self.reflect('horizontal')).pack(fill=tk.X, padx=5, pady=2)
-        ttk.Button(scrollable_transform, text="Flip Vertical",
-                    command=lambda: self.reflect('vertical')).pack(fill=tk.X, padx=5, pady=2)
-    
-        # ========================
-        # PERSPECTIVE TAB
-        # ========================
-        perspective_frame = ttk.Frame(notebook)
-        notebook.add(perspective_frame, text="Perspective")
-    
-        # Scrollable container for perspective controls
-        perspective_container = ttk.Frame(perspective_frame)
-        perspective_container.pack(fill=tk.BOTH, expand=True)
-    
-        canvas_p = tk.Canvas(perspective_container, bg='#2b2b2b', highlightthickness=0)
-        scrollbar_p = ttk.Scrollbar(perspective_container, orient="vertical", command=canvas_p.yview)
-        scrollable_perspective = ttk.Frame(canvas_p)
-    
-        scrollable_perspective.bind(
-            "<Configure>",
-            lambda e: canvas_p.configure(scrollregion=canvas_p.bbox("all"))
-        )
-        canvas_p.create_window((0, 0), window=scrollable_perspective, anchor="nw")
-        canvas_p.configure(yscrollcommand=scrollbar_p.set)
-    
-        canvas_p.pack(side="left", fill="both", expand=True)
-        scrollbar_p.pack(side="right", fill="y")
-    
-        # ========== Perspective Controls ==========
-        ttk.Label(scrollable_perspective, text="Perspective Transform", style='Header.TLabel').pack(pady=5)
-    
-        corners = [
-            "Top Left X", "Top Left Y", "Top Right X", "Top Right Y",
-            "Bottom Left X", "Bottom Left Y", "Bottom Right X", "Bottom Right Y"
-        ]
-    
-        self.perspective_values = {c: 0 for c in corners}
-    
-        for key in corners:
-            self._add_slider_with_entry(
-                scrollable_perspective, key, key,
-                -1000, 1000, 0,
-                lambda v, k=key: self.update_perspective(k, v)
-            )
+        self.left_inner = self._make_vscroll_area(self.left_wrap, width=320, bg="#0b1220")
+        self._build_left_panel(self.left_inner)
 
+        # Left toggle
+        left_toggle_col = tk.Frame(content, bg="#0b1220", width=26)
+        left_toggle_col.grid(row=0, column=1, sticky="ns", pady=10)
+        left_toggle_col.grid_propagate(False)
+        self.left_toggle_btn = ttk.Button(left_toggle_col, text="◀", width=2,
+                                          style="Accent.TButton", command=self.toggle_left_panel)
+        self.left_toggle_btn.pack(pady=6)
 
-        
-    def _build_center_panel(self):
-        # Image display
-        self.image_label = ttk.Label(self.center_frame, anchor=tk.CENTER)
-        self.image_label.pack(fill=tk.BOTH, expand=True)
-        
-    def _build_right_panel(self):
-        self._build_histogram()
-        # Create notebook for tabs
-        notebook = ttk.Notebook(self.right_panel)
-        notebook.pack(fill=tk.BOTH, expand=True)
-        
-        # ========================
-        # BASIC ADJUSTMENT TAB
-        # ========================
-        color_frame = ttk.Frame(notebook)
-        notebook.add(color_frame, text="Basic")
+        # Center (preview)
+        self.center_frame = tk.Frame(content, bg="#0f1826", highlightthickness=3, highlightbackground="#4c86a8")
+        self.center_frame.grid(row=0, column=2, sticky="nsew", padx=4, pady=10)
 
-        # Create a frame that will contain both the canvas and scrollbar
-        color_container = ttk.Frame(color_frame)
-        color_container.pack(fill=tk.BOTH, expand=True)
+        self.image_label = tk.Label(self.center_frame, bg="#0f1826")
+        self.image_label.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Create canvas and scrollbar
-        canvas = tk.Canvas(color_container, bg='#2b2b2b', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(color_container, orient="vertical", command=canvas.yview)
+        # Right toggle
+        right_toggle_col = tk.Frame(content, bg="#0b1220", width=26)
+        right_toggle_col.grid(row=0, column=3, sticky="ns", pady=10)
+        right_toggle_col.grid_propagate(False)
+        self.right_toggle_btn = ttk.Button(right_toggle_col, text="▶", width=2,
+                                           style="Accent.TButton", command=self.toggle_right_panel)
+        self.right_toggle_btn.pack(pady=6)
 
-        # Create the scrollable frame
-        scrollable_frame = ttk.Frame(canvas)
+        # Right panel
+        self.right_wrap = tk.Frame(content, bg="#0b1220")
+        self.right_wrap.grid(row=0, column=4, sticky="ns", padx=(4, 10), pady=10)
 
-        # Configure the canvas scrolling
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+        # Histogram (kotak)
+        hist_group = ttk.Labelframe(self.right_wrap, text="Histogram")
+        hist_group.pack(fill=tk.X, pady=(0, 8))
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        # ========= COLOR ADJUSTMENTS =========
-        self._add_slider_with_entry(scrollable_frame, "Exposure", 'exposure', -100, 100, 0, self._adjust_preview)
-        self._add_slider_with_entry(scrollable_frame, "Highlights", 'highlights', -100, 100, 0, self._adjust_preview)
-        self._add_slider_with_entry(scrollable_frame, "Shadows", 'shadows', -100, 100, 0, self._adjust_preview)
-
-        self._add_slider_with_entry(scrollable_frame, "Contrast", 'contrast', -100, 100, 0, self._adjust_preview)
-        self._add_slider_with_entry(scrollable_frame, "Brightness", 'brightness', -100, 100, 0, self._adjust_preview)
-
-        self._add_slider_with_entry(scrollable_frame, "Blacks", 'blacks', -100, 100, 0, self._adjust_preview)
-        self._add_slider_with_entry(scrollable_frame, "Whites", 'whites', -100, 100, 0, self._adjust_preview)
-
-        # Pack canvas and scrollbar in the container
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        # Make sure the canvas can expand
-        color_container.pack_propagate(False)
-        
-        # ========================
-        # COLOR ADJUSTMENT TAB
-        # ========================
-        color_frame = ttk.Frame(notebook)
-        notebook.add(color_frame, text="Color")
-
-        # Create a frame that will contain both the canvas and scrollbar
-        color_container = ttk.Frame(color_frame)
-        color_container.pack(fill=tk.BOTH, expand=True)
-
-        # Create canvas and scrollbar
-        canvas = tk.Canvas(color_container, bg='#2b2b2b', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(color_container, orient="vertical", command=canvas.yview)
-
-        # Create the scrollable frame
-        scrollable_frame = ttk.Frame(canvas)
-
-        # Configure the canvas scrolling
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        
-        self._add_slider_with_entry(scrollable_frame, "Hue", 'hue', -180, 180, 0, self._adjust_preview)
-        self._add_slider_with_entry(scrollable_frame, "Tint (G/M)", 'tint', -100, 100, 0, self._adjust_preview)
-        self._add_slider_with_entry(scrollable_frame, "Saturation", 'saturation', -100, 100, 0, self._adjust_preview)
-        self._add_slider_with_entry(scrollable_frame, "Temperature", 'temperature', -100, 100, 0, self._adjust_preview)
-        self._add_slider_with_entry(scrollable_frame, "Vibrance", 'vibrance', -100, 100, 0, self._adjust_preview)
-
-        # Pack canvas and scrollbar in the container
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        # Make sure the canvas can expand
-        color_container.pack_propagate(False)
-        # ========================
-        # MORPHOLOGY TAB
-        # ========================
-        morph_frame = ttk.Frame(notebook)
-        notebook.add(morph_frame, text="Morphology")
-        ttk.Label(morph_frame, text="Kernel Size:").pack(pady=5)
-        self.kernel_size_var = tk.IntVar(value=3)
-        kernel_frame = ttk.Frame(morph_frame)
-        kernel_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        kernel_slider = ttk.Scale(kernel_frame, from_=1, to=15, orient=tk.HORIZONTAL,
-                                 variable=self.kernel_size_var)
-        kernel_slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        kernel_entry = ttk.Entry(kernel_frame, textvariable=self.kernel_size_var, width=5)
-        kernel_entry.pack(side=tk.RIGHT, padx=5)
-        
-        # Store for reset
-        self.slider_widgets['kernel_size'] = (kernel_slider, kernel_entry, self.kernel_size_var, 3)
-        
-        ttk.Button(morph_frame, text="Erosion", 
-                  command=lambda: self.apply_morphology('erosion')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(morph_frame, text="Dilation", 
-                  command=lambda: self.apply_morphology('dilation')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(morph_frame, text="Opening", 
-                  command=lambda: self.apply_morphology('opening')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(morph_frame, text="Closing", 
-                  command=lambda: self.apply_morphology('closing')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(morph_frame, text="Gradient", 
-                  command=lambda: self.apply_morphology('gradient')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(morph_frame, text="Mean Filter", 
-                  command=lambda: self.apply_morphology('mean_filter')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(morph_frame, text="Median Filter",
-                  command=lambda: self.apply_morphology('median_filter')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(morph_frame, text="Max Filter",
-                  command=lambda: self.apply_morphology('max_filter')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(morph_frame, text="Min Filter",
-                  command=lambda: self.apply_morphology('min_filter')).pack(fill=tk.X, padx=10, pady=2)
-
-        # ========================
-        # FILTER TAB
-        # ========================
-        filter_frame = ttk.Frame(notebook)
-        notebook.add(filter_frame, text="Filters")
-        self._add_slider_with_entry(filter_frame, "Blur", 'blur', 0, 20, 0, self._adjust_preview)
-        self._add_slider_with_entry(filter_frame, "Noise", 'noise', 0, 100, 0, self._adjust_preview)
-        self._add_slider_with_entry(filter_frame, "Vignette", 'vignette', 0, 100, 0, self._adjust_preview)
-        
-        ttk.Separator(filter_frame, orient='horizontal').pack(fill=tk.X, pady=10)
-        
-        ttk.Label(filter_frame, text="Quick Filters", style='Header.TLabel').pack(pady=5)
-        ttk.Button(filter_frame, text="Grayscale", 
-                  command=lambda: self.apply_filter('grayscale')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(filter_frame, text="Sepia", 
-                  command=lambda: self.apply_filter('sepia')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(filter_frame, text="Edge Detection", 
-                  command=lambda: self.apply_filter('edge')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(filter_frame, text="Emboss", 
-                  command=lambda: self.apply_filter('emboss')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(filter_frame, text="Sharpen", 
-                  command=lambda: self.apply_filter('sharpen')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(filter_frame, text="Sobel", 
-                  command=lambda: self.apply_filter('sobel')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(filter_frame, text="Prewitt", 
-                  command=lambda: self.apply_filter('prewitt')).pack(fill=tk.X, padx=10, pady=2)
-        ttk.Button(filter_frame, text="Laplacian", 
-                  command=lambda: self.apply_filter('laplacian')).pack(fill=tk.X, padx=10, pady=2)
-        
-        # ========================
-        # FREQUENCY TAB
-        # ========================
-        filter_frame = ttk.Frame(notebook)
-        notebook.add(filter_frame, text="Frequency")
-        
-        # ========================
-        # Enchanment TAB
-        # ========================
-        filter_frame = ttk.Frame(notebook)
-        notebook.add(filter_frame, text="Enchanment")
-        
-    def _add_slider_with_entry(self, parent, label, key, min_val, max_val, default, command):
-        frame = ttk.Frame(parent)
-        frame.pack(fill=tk.X, padx=10, pady=5)
-
-        ttk.Label(frame, text=label).pack(anchor=tk.W)
-        
-        # Get the correct variable based on key
-        if key == 'exposure':
-            var = self.exposure_var
-        elif key == 'highlights':
-            var = self.highlights_var
-        elif key == 'shadows':
-            var = self.shadows_var
-        elif key == 'contrast':
-            var = self.contrast_var
-        elif key == 'brightness':
-            var = self.brightness_var
-        elif key == 'blacks':
-            var = self.blacks_var
-        elif key == 'whites':
-            var = self.whites_var
-        elif key == 'hue':
-            var = self.hue_var
-        elif key == 'tint':
-            var = self.tint_var
-        elif key == 'saturation':
-            var = self.saturation_var
-        elif key == 'temperature':
-            var = self.temperature_var
-        elif key == 'vibrance':
-            var = self.vibrance_var
-        elif key == 'blur':
-            var = self.blur_var
-        elif key == 'noise':
-            var = self.noise_var
-        elif key == 'vignette':
-            var = self.vignette_var
-        else:
-            # For transform sliders
-            var = tk.DoubleVar(value=default)
-
-        slider_frame = ttk.Frame(frame)
-        slider_frame.pack(fill=tk.X)
-
-        slider = ttk.Scale(slider_frame, from_=min_val, to=max_val,
-                          orient=tk.HORIZONTAL, variable=var)
-        slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        entry = ttk.Entry(slider_frame, textvariable=var, width=6)
-        entry.pack(side=tk.RIGHT, padx=5)
-
-        # Debounce setup
-        delay_ms = 300
-        self._debounce_after_ids = getattr(self, "_debounce_after_ids", {})
-
-        def schedule_update():
-            if command:
-                if key in self._debounce_after_ids:
-                    self.after_cancel(self._debounce_after_ids[key])
-                self._debounce_after_ids[key] = self.after(
-                    delay_ms, lambda: command(var.get())
-                )
-
-        # Event bindings for smooth UX
-        slider.bind("<ButtonRelease-1>", lambda e: schedule_update())
-        slider.bind("<KeyRelease>", lambda e: schedule_update())
-        entry.bind("<Return>", lambda e: schedule_update())
-        entry.bind("<FocusOut>", lambda e: schedule_update())
-
-        def validate_entry(*_):
-            try:
-                value = float(var.get())
-                if value < min_val:
-                    var.set(min_val)
-                elif value > max_val:
-                    var.set(max_val)
-            except (ValueError, tk.TclError):
-                var.set(default)
-
-        var.trace_add("write", lambda *_: validate_entry())
-
-        # Store for reset
-        self.slider_widgets[key] = (slider, entry, var, default)
-        return var
-
-    def _build_histogram(self):
-        hist_frame = ttk.Frame(self.right_panel)
-        hist_frame.pack(fill=tk.X, pady=5)
-
-        fig = Figure(figsize=(6, 2), dpi=100, facecolor='#2b2b2b')
+        fig = Figure(figsize=(4.4, 3.1), dpi=100, facecolor="#0f1826")
         self.hist_ax = fig.add_subplot(111)
-        self.hist_ax.set_facecolor('#2b2b2b')
-        self.hist_ax.tick_params(colors='white')
+        self.hist_ax.set_facecolor("#0f1826")
+        self.hist_ax.tick_params(colors="white")
+        self.hist_ax.set_title("Histogram", color="white", fontsize=10)
+        self.hist_canvas = FigureCanvasTkAgg(fig, master=hist_group)
+        self.hist_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
-        self.hist_canvas = FigureCanvasTkAgg(fig, master=hist_frame)
-        self.hist_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        # Controls (tabs)
+        control_box = tk.Frame(self.right_wrap, bg="#0b1220")
+        control_box.pack(fill=tk.BOTH, expand=True)
 
+        nav = tk.Frame(control_box, bg="#0b1220")
+        nav.pack(fill=tk.X, pady=(0, 6))
+        ttk.Button(nav, text="◀", width=2, style="Accent.TButton",
+                   command=lambda: self._cycle_tab(self.adjust_nb, -1)).pack(side=tk.LEFT)
+        ttk.Button(nav, text="▶", width=2, style="Accent.TButton",
+                   command=lambda: self._cycle_tab(self.adjust_nb, 1)).pack(side=tk.RIGHT)
+
+        self.adjust_nb = ttk.Notebook(control_box)
+        self.adjust_nb.pack(fill=tk.BOTH, expand=True)
+
+        # Tabs (scrollable)
+        # Basic
+        basic_outer = tk.Frame(self.adjust_nb, bg="#0b1220")
+        self.adjust_nb.add(basic_outer, text="Basic")
+        basic_inner, _ = self._make_vscroll_area(basic_outer, return_canvas=True)
+        self._build_basic_tab(basic_inner)
+
+        # Color
+        color_outer = tk.Frame(self.adjust_nb, bg="#0b1220")
+        self.adjust_nb.add(color_outer, text="Color")
+        color_inner, _ = self._make_vscroll_area(color_outer, return_canvas=True)
+        self._build_color_tab(color_inner)
+
+        # Morphology
+        morph_outer = tk.Frame(self.adjust_nb, bg="#0b1220")
+        self.adjust_nb.add(morph_outer, text="Morphology")
+        morph_inner, _ = self._make_vscroll_area(morph_outer, return_canvas=True)
+        self._build_morphology_tab(morph_inner)
+
+        # Filters
+        filt_outer = tk.Frame(self.adjust_nb, bg="#0b1220")
+        self.adjust_nb.add(filt_outer, text="Filters")
+        filt_inner, _ = self._make_vscroll_area(filt_outer, return_canvas=True)
+        self._build_filters_tab(filt_inner)
+
+        # Frequency
+        freq_outer = tk.Frame(self.adjust_nb, bg="#0b1220")
+        self.adjust_nb.add(freq_outer, text="Frequency")
+        freq_inner, _ = self._make_vscroll_area(freq_outer, return_canvas=True)
+        self._build_frequency_tab(freq_inner)
+
+        # Enhancement
+        ench_outer = tk.Frame(self.adjust_nb, bg="#0b1220")
+        self.adjust_nb.add(ench_outer, text="Enhancement")
+        ench_inner, _ = self._make_vscroll_area(ench_outer, return_canvas=True)
+        self._build_enhancement_tab(ench_inner)
+
+        # Set awal state toolbar
+        self._update_toolbar_state(has_image=False)
+
+    # ---------- COLLAPSE TOGGLES ----------
+    def toggle_left_panel(self):
+        if not self.left_collapsed:
+            # hide
+            self.left_wrap.grid_remove()
+            self.left_collapsed = True
+            self.left_toggle_btn.configure(text="▶")
+        else:
+            # show
+            self.left_wrap.grid()
+            self.left_collapsed = False
+            self.left_toggle_btn.configure(text="◀")
+        self.update_image_preview()
+
+    def toggle_right_panel(self):
+        if not self.right_collapsed:
+            self.right_wrap.grid_remove()
+            self.right_collapsed = True
+            self.right_toggle_btn.configure(text="◀")
+        else:
+            self.right_wrap.grid()
+            self.right_collapsed = False
+            self.right_toggle_btn.configure(text="▶")
+        self.update_image_preview()
+
+    # ---------- helpers: scrollable area ----------
+    def _make_vscroll_area(self, parent, width=None, bg="#0b1220", return_canvas=False):
+        """
+        Create vertical scroll area inside parent.
+        Return: inner frame (and canvas if return_canvas=True)
+        """
+        holder = tk.Frame(parent, bg=bg)
+        holder.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(holder, bg=bg, highlightthickness=0, bd=0)
+        vbar = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vbar.grid(row=0, column=1, sticky="ns")
+        holder.grid_rowconfigure(0, weight=1)
+        holder.grid_columnconfigure(0, weight=1)
+
+        inner = ttk.Frame(canvas)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        if width:
+            canvas.config(width=width)
+
+        def _on_inner_config(_=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner.bind("<Configure>", _on_inner_config)
+
+        def _on_canvas_config(event):
+            # keep inner width == canvas width
+            canvas.itemconfigure(win_id, width=event.width)
+        canvas.bind("<Configure>", _on_canvas_config)
+
+        # Enable mouse wheel scrolling
+        self._enable_mousewheel(inner, canvas)
+
+        if return_canvas:
+            return inner, canvas
+        return inner
+    #Uh -Rick
+    def _enable_mousewheel(self, widget, canvas):
+        def _on_mousewheel(event):
+            if sys.platform == "darwin":
+                delta = 1 if event.delta > 0 else -1
+                canvas.yview_scroll(-delta, "units")
+            else:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"
+
+        widget.bind("<Enter>", lambda e: widget.bind_all("<MouseWheel>", _on_mousewheel))
+        widget.bind("<Leave>", lambda e: widget.unbind_all("<MouseWheel>"))
+
+    # =========================
+    # BUILD PANELS
+    # =========================
+    def _build_left_panel(self, parent):
+        # Transform
+        tf = ttk.Labelframe(parent, text="Transform")
+        tf.pack(fill=tk.X, padx=6, pady=6)
+
+        self._add_slider_with_entry(tf, "Resize (%)", "resize", 10, 200, 100, lambda v: self.update_transform("resize", v))
+        self._add_slider_with_entry(tf, "Rotate (°)", "rotate", -180, 180, 0, lambda v: self.update_transform("rotate", v))
+
+        ttk.Button(tf, text="Crop (Interactive)", style="Accent.TButton",
+                   command=self.interactive_crop).pack(fill=tk.X, padx=4, pady=4)
+        ttk.Button(tf, text="Draw / Annotate (Interactive)", style="Accent.TButton",
+                   command=self.interactive_draw).pack(fill=tk.X, padx=4, pady=4)
+
+        self._add_slider_with_entry(tf, "Scale X (%)", "scale_x", 10, 200, 100, lambda v: self.update_transform("scale_x", v))
+        self._add_slider_with_entry(tf, "Scale Y (%)", "scale_y", 10, 200, 100, lambda v: self.update_transform("scale_y", v))
+
+        ttk.Button(tf, text="Flip Horizontal", style="Accent.TButton",
+                   command=lambda: self.reflect("horizontal")).pack(fill=tk.X, padx=4, pady=4)
+        ttk.Button(tf, text="Flip Vertical", style="Accent.TButton",
+                   command=lambda: self.reflect("vertical")).pack(fill=tk.X, padx=4, pady=4)
+
+        # Perspective
+        pf = ttk.Labelframe(parent, text="Perspective")
+        pf.pack(fill=tk.X, padx=6, pady=6)
+
+        corners = [
+            "Top Left X", "Top Left Y",
+            "Top Right X", "Top Right Y",
+            "Bottom Left X", "Bottom Left Y",
+            "Bottom Right X", "Bottom Right Y",
+        ]
+        for key in corners:
+            self._add_slider_with_entry(pf, key, key, -1000, 1000, 0, lambda v, k=key: self.update_perspective(k, v))
+
+    def _build_basic_tab(self, parent):
+        self._add_slider_with_entry(parent, "Exposure", "exposure", -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Highlights", "highlights", -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Shadows", "shadows", -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Contrast", "contrast", -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Brightness", "brightness", -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Blacks", "blacks", -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Whites", "whites", -100, 100, 0, self._adjust_preview)
+
+    def _build_color_tab(self, parent):
+        self._add_slider_with_entry(parent, "Hue", "hue", -180, 180, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Tint (G/M)", "tint", -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Saturation", "saturation", -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Temperature", "temperature", -100, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Vibrance", "vibrance", -100, 100, 0, self._adjust_preview)
+
+    def _build_morphology_tab(self, parent):
+        ttk.Label(parent, text="Kernel Size (odd):").pack(pady=5)
+        krow = ttk.Frame(parent)
+        krow.pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        k_slider = ttk.Scale(krow, from_=1, to=15, orient=tk.HORIZONTAL)
+        k_slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        k_entry = ttk.Entry(krow, width=5)
+        k_entry.pack(side=tk.RIGHT, padx=6)
+        k_entry.insert(0, "3")
+
+        def _to_odd(v):
+            v = int(round(float(v)))
+            return v if v % 2 == 1 else v + 1
+
+        def _sync_from_scale(_=None):
+            v = _to_odd(k_slider.get())
+            if self.kernel_size_var.get() != v:
+                self.kernel_size_var.set(v)
+            k_entry.delete(0, tk.END)
+            k_entry.insert(0, str(v))
+
+        def _sync_from_entry(_=None):
+            try:
+                v = _to_odd(k_entry.get())
+            except Exception:
+                v = 3
+            k_slider.set(v)
+            self.kernel_size_var.set(v)
+
+        k_slider.configure(command=_sync_from_scale)
+        k_entry.bind("<Return>", _sync_from_entry)
+        k_entry.bind("<FocusOut>", _sync_from_entry)
+
+        self.slider_widgets["kernel_size"] = (k_slider, k_entry, self.kernel_size_var, 3)
+
+        for text, op, title in [
+            ("Erosion",  'erosion',  "Applying Erosion..."),
+            ("Dilation", 'dilation', "Applying Dilation..."),
+            ("Opening",  'opening',  "Applying Opening..."),
+            ("Closing",  'closing',  "Applying Closing..."),
+            ("Gradient", 'gradient', "Applying Gradient..."),
+        ]:
+            ttk.Button(parent, text=text, style="Accent.TButton",
+                       command=lambda op=op, title=title: self._with_overlay(self.apply_morphology, op, title=title)
+                       ).pack(fill=tk.X, padx=10, pady=4)
+
+    def _build_filters_tab(self, parent):
+        self._add_slider_with_entry(parent, "Blur", "blur", 0, 20, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Noise", "noise", 0, 100, 0, self._adjust_preview)
+        self._add_slider_with_entry(parent, "Vignette", "vignette", 0, 100, 0, self._adjust_preview)
+
+        ttk.Separator(parent, orient="horizontal").pack(fill=tk.X, pady=10)
+        ttk.Label(parent, text="Quick Filters").pack(pady=(0, 6))
+
+        ttk.Button(parent, text="Grayscale", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self.apply_filter, "grayscale", title="Applying Grayscale...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Sepia", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self.apply_filter, "sepia", title="Applying Sepia...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Edge Detection", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self.apply_filter, "edge", title="Detecting Edges...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Emboss", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self.apply_filter, "emboss", title="Applying Emboss...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Sharpen", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self.apply_filter, "sharpen", title="Sharpening...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+
+    def _build_frequency_tab(self, parent):
+        ttk.Label(parent, text="Apply Frequency Transformations:").pack(anchor="w", padx=10, pady=(4, 6))
+        ttk.Button(parent, text="Fourier Transform (FFT)", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self._apply_fft, title="Computing FFT...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Inverse FFT", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self._apply_ifft, title="Computing Inverse FFT...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="High Pass Filter", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self._apply_high_pass, title="Applying High Pass...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Low Pass Filter", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self._apply_low_pass, title="Applying Low Pass...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+
+    def _build_enhancement_tab(self, parent):
+        ttk.Label(parent, text="Apply Enhancement Techniques:").pack(anchor="w", padx=10, pady=(4, 6))
+        ttk.Button(parent, text="Auto Enhance", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self._auto_enhance, title="Auto Enhancing...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Sharpen", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self._sharpen_image, title="Sharpening...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Denoise", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self._denoise_image, title="Denoising...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Detail Boost", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self._boost_detail, title="Boosting Detail...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+
+    def _cycle_tab(self, nb, step):
+        try:
+            count = nb.index('end')
+        except Exception:
+            return
+        if count <= 0:
+            return
+        try:
+            cur = nb.index(nb.select())
+        except Exception:
+            cur = 0
+        nb.select((cur + step) % count)
+
+    # =========================
+    # HISTOGRAM
+    # =========================
     def _update_histogram(self, img=None):
         if img is None:
             img = self.current_image
         if img is None:
             return
-
-        img_array = np.array(img.convert('RGB'))
+        img_array = np.array(img.convert("RGB"))
         self.hist_ax.clear()
-        colors = ('r', 'g', 'b')
+        colors = ("r", "g", "b")
         for i, color in enumerate(colors):
             hist = cv2.calcHist([img_array], [i], None, [256], [0, 256])
             self.hist_ax.plot(hist, color=color)
         self.hist_ax.set_xlim([0, 256])
-        self.hist_ax.set_facecolor('#2b2b2b')
-        self.hist_ax.tick_params(colors='white')
-        self.hist_ax.set_title("Histogram", color='white')
+        self.hist_ax.set_facecolor("#0f1826")
+        self.hist_ax.tick_params(colors="white")
+        self.hist_ax.set_title("Histogram", color="white", fontsize=10)
         self.hist_canvas.draw_idle()
 
-    # ============================
-    # UNDO/REDO FUNCTIONALITY
-    # ============================
-    
+    # =========================
+    # UNDO/REDO
+    # =========================
     def save_state(self):
-        """Save current image state to undo stack"""
         if self.current_image is not None:
-            # Convert to bytes for efficient storage
             img_bytes = BytesIO()
-            self.current_image.save(img_bytes, format='PNG')
+            self.current_image.save(img_bytes, format="PNG")
             img_bytes.seek(0)
-            
-            # Save to undo stack
             self.undo_stack.append(img_bytes)
-            
-            # Clear redo stack when new action is performed
             self.redo_stack.clear()
-            
-            # Update status
             self._update_undo_redo_status()
-    
+
     def undo(self):
-        """Undo the last operation"""
-        if len(self.undo_stack) > 1:  # Keep at least one state (original)
-            # Save current state to redo stack
+        if len(self.undo_stack) > 1:
             if self.current_image is not None:
                 img_bytes = BytesIO()
-                self.current_image.save(img_bytes, format='PNG')
+                self.current_image.save(img_bytes, format="PNG")
                 img_bytes.seek(0)
                 self.redo_stack.append(img_bytes)
-            
-            # Restore previous state
             previous_state = self.undo_stack.pop()
-            self.current_image = Image.open(previous_state).convert('RGBA')
+            self.current_image = Image.open(previous_state).convert("RGBA")
             self.update_image_preview()
-            
-            # Update status
             self._update_undo_redo_status()
         else:
             messagebox.showinfo("Info", "Nothing to undo")
-    
+
     def redo(self):
-        """Redo the last undone operation"""
         if self.redo_stack:
-            # Save current state to undo stack
             if self.current_image is not None:
                 img_bytes = BytesIO()
-                self.current_image.save(img_bytes, format='PNG')
+                self.current_image.save(img_bytes, format="PNG")
                 img_bytes.seek(0)
                 self.undo_stack.append(img_bytes)
-            
-            # Restore next state
             next_state = self.redo_stack.pop()
-            self.current_image = Image.open(next_state).convert('RGBA')
+            self.current_image = Image.open(next_state).convert("RGBA")
             self.update_image_preview()
-            
-            # Update status
             self._update_undo_redo_status()
         else:
             messagebox.showinfo("Info", "Nothing to redo")
-    
+
     def _update_undo_redo_status(self):
-        """Update status label with undo/redo information"""
-        undo_count = len(self.undo_stack) - 1  # Don't count current state
+        undo_count = len(self.undo_stack) - 1
         redo_count = len(self.redo_stack)
-        
         status_parts = []
-        if hasattr(self, 'status_label') and self.status_label['text'] != "No image loaded":
-            base_status = self.status_label['text'].split(' | ')[0]
+        if hasattr(self, "status_label") and self.status_label["text"] != "No image loaded":
+            base_status = self.status_label["text"].split(" | ")[0]
             status_parts.append(base_status)
-        
         if undo_count > 0:
             status_parts.append(f"Undo: {undo_count}/5")
         if redo_count > 0:
             status_parts.append(f"Redo: {redo_count}/5")
-        
         if status_parts:
             self.status_label.config(text=" | ".join(status_parts))
+        self._update_toolbar_state()
 
+    def _update_toolbar_state(self, has_image=None):
+        if not hasattr(self, 'btns'):
+            return
+        img_loaded = bool(self.current_image) if has_image is None else bool(has_image)
+
+        self.btns["open"].set_enabled(True)
+        self.btns["gen"].set_enabled(True)
+        self.btns["save"].set_enabled(img_loaded)
+        self.btns["reset"].set_enabled(img_loaded)
+        self.btns["undo"].set_enabled(len(self.undo_stack) > 1)
+        self.btns["redo"].set_enabled(len(self.redo_stack) > 0)
+
+    # =========================
+    # FILE OPS / AI GENERATION
+    # =========================
     def enhance_image(self):
-        """Enhance the current image using Topaz Labs API."""
-        API_KEY = "46440a95-8bee-4c5f-8fbc-ea9937e33a14"  # your saved API key for Topaz Labs
+        API_KEY = "46440a95-8bee-4c5f-8fbc-ea9937e33a14" 
 
-        # ✅ Check if an image is loaded
         if not hasattr(self, "original_image") or self.original_image is None:
             messagebox.showwarning("No Image", "Please open an image first.")
             return
@@ -708,50 +740,6 @@ class AdvancedImageProcessor(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred:\n{e}")
             self.status_label.config(text="❌ Error during background removal.")
-
-    
-    def generate_ai_image(self):
-        prompt = simpledialog.askstring("AI Image Generation with Pollinations", 
-                                        "Enter your image prompt:")
-        if not prompt:
-            return
-
-        try:
-            # Update status
-            if hasattr(self, 'status_label'):
-                self.status_label.config(text="Generating AI image... please wait.")
-                self.status_label.update_idletasks()
-    
-            base_url = "https://image.pollinations.ai/prompt/"
-            prompt_encoded = requests.utils.quote(prompt)
-            url = f"{base_url}{prompt_encoded}?width=512&height=512&model=flux"
-
-            response = requests.get(url, timeout=60)
-            response.raise_for_status()
-
-            img_data = BytesIO(response.content)
-            img = Image.open(img_data).convert("RGB")
-
-            # Update the app image states
-            self.original_image = img
-            self.current_image = img.copy()
-            
-            # Save initial state for undo
-            self.save_state()
-
-            if hasattr(self, 'reset_all_sliders'):
-                self.reset_all_sliders()
-            if hasattr(self, 'update_image_preview'):
-                self.update_image_preview()
-
-            if hasattr(self, 'status_label'):
-                self.status_label.config(text=f"AI generated image from: '{prompt}'")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to generate image:\n{e}")
-            if hasattr(self, 'status_label'):
-                self.status_label.config(text="AI image generation failed.")
-    
     def apply_artistic_filter(self):
         if not self.current_image:
             messagebox.showwarning("No Image", "Please open or generate an image first.")
@@ -787,71 +775,102 @@ class AdvancedImageProcessor(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to apply filter:\n{e}")
 
-    
+    def generate_ai_image(self):
+        prompt = simpledialog.askstring("AI Image Generation with Pollinations", "Enter your image prompt:")
+        if not prompt:
+            return
+        try:
+            self._show_loading_overlay("Generating with Pollinations...")
+            self.status_label.config(text="Generating AI image...")
+            self.status_label.update_idletasks()
+
+            base_url = "https://image.pollinations.ai/prompt/"
+            prompt_encoded = requests.utils.quote(prompt)
+            url = f"{base_url}{prompt_encoded}?width=512&height=512&model=flux"
+            response = requests.get(url, timeout=60)
+            response.raise_for_status()
+
+            img_data = BytesIO(response.content)
+            img = Image.open(img_data).convert("RGB")
+
+            self.original_image = img
+            self.current_image = img.copy()
+            self.undo_stack.clear()
+            self.redo_stack.clear()
+            self.save_state()
+            self.reset_all_sliders()
+            self.update_image_preview()
+            self.status_label.config(text=f"AI generated image from: '{prompt}'")
+            self._update_toolbar_state(True)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate image:\n{e}")
+            self.status_label.config(text="AI image generation failed.")
+        finally:
+            self._hide_loading_overlay()
+
     def open_image(self):
         path = filedialog.askopenfilename(
             filetypes=[("Image files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tiff")]
         )
         if not path:
             return
-        
         try:
-            img = Image.open(path).convert('RGBA')
+            img = Image.open(path).convert("RGBA")
             self.original_image = img
             self.current_image = img.copy()
-            
-            # Clear undo/redo stacks and save initial state
             self.undo_stack.clear()
             self.redo_stack.clear()
             self.save_state()
-            
             self.reset_all_sliders()
             self.update_image_preview()
             self.status_label.config(text=f"Loaded: {os.path.basename(path)} ({img.width}x{img.height})")
+            self._update_toolbar_state(True)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open image:\n{e}")
-    
+
     def save_image(self):
         if self.current_image is None:
             messagebox.showwarning("Warning", "No image to save")
             return
-        
         path = filedialog.asksaveasfilename(
-            defaultextension='.png',
+            defaultextension=".png",
             filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg"), ("BMP", "*.bmp")]
         )
         if not path:
             return
-        
         try:
+            self._show_loading_overlay("Saving image...")
             img = self.apply_all_adjustments()
-            if path.lower().endswith('.jpg'):
-                img = img.convert('RGB')
+            if path.lower().endswith(".jpg") or path.lower().endswith(".jpeg"):
+                img = img.convert("RGB")
             img.save(path)
             messagebox.showinfo("Success", f"Image saved to:\n{path}")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save image:\n{e}")
-    
+        finally:
+            self._hide_loading_overlay()
+
+    # =========================
+    # ADJUSTMENTS PIPELINE
+    # =========================
     def apply_all_adjustments(self):
         if self.current_image is None:
             return None
-            
-        # Start with the current image (which has geometric transforms applied)
         img = self.current_image.copy()
-        
-        # 1. Exposure
+
+        # Exposure
         exposure = float(self.exposure_var.get())
         if exposure != 0:
-            factor = np.power(2, exposure / 100)  # normalize exposure
+            factor = np.power(2, exposure / 100)
             img = ImageEnhance.Brightness(img).enhance(factor)
 
-        # 2. Highlights & Shadows
+        # Highlights/Shadows
         highlights = float(self.highlights_var.get())
         shadows = float(self.shadows_var.get())
         if highlights != 0 or shadows != 0:
             img = self.adjust_highlights_shadows(img, highlights, shadows)
 
-        # 3. Contrast & Brightness
+        # Contrast/Brightness
         contrast = float(self.contrast_var.get())
         brightness = float(self.brightness_var.get())
         if contrast != 0:
@@ -859,13 +878,13 @@ class AdvancedImageProcessor(tk.Tk):
         if brightness != 0:
             img = ImageEnhance.Brightness(img).enhance(1 + (brightness / 100))
 
-        # 4. Blacks & Whites
+        # Blacks/Whites
         blacks = float(self.blacks_var.get())
         whites = float(self.whites_var.get())
         if blacks != 0 or whites != 0:
             img = self.adjust_levels(img, blacks, whites)
 
-        # 5. Color adjustments
+        # Color
         hue_shift = float(self.hue_var.get())
         tint = float(self.tint_var.get())
         vibrance = float(self.vibrance_var.get())
@@ -883,7 +902,7 @@ class AdvancedImageProcessor(tk.Tk):
         if temperature != 0:
             img = self.adjust_temperature(img, temperature)
 
-        # 6. Filters
+        # Filters
         blur = float(self.blur_var.get())
         noise = float(self.noise_var.get())
         vignette = float(self.vignette_var.get())
@@ -899,519 +918,321 @@ class AdvancedImageProcessor(tk.Tk):
 
     def update_perspective(self, key, value):
         self.perspective_values[key] = float(value)
-        # Live preview
         self.apply_perspective(preview=True)
 
     def apply_perspective(self, preview=False):
         if self.original_image is None:
             return
-
         img = np.array(self.original_image.convert("RGB"))
         h, w = img.shape[:2]
-
-        # Define original corners (rectangle)
         src_pts = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
-
-        # Get user offsets
-        tl_x = self.perspective_values["Top Left X"]
-        tl_y = self.perspective_values["Top Left Y"]
-        tr_x = self.perspective_values["Top Right X"]
-        tr_y = self.perspective_values["Top Right Y"]
-        bl_x = self.perspective_values["Bottom Left X"]
-        bl_y = self.perspective_values["Bottom Left Y"]
-        br_x = self.perspective_values["Bottom Right X"]
-        br_y = self.perspective_values["Bottom Right Y"]
-
-        # Destination points
+        tl_x = self.perspective_values["Top Left X"];     tl_y = self.perspective_values["Top Left Y"]
+        tr_x = self.perspective_values["Top Right X"];    tr_y = self.perspective_values["Top Right Y"]
+        bl_x = self.perspective_values["Bottom Left X"];  bl_y = self.perspective_values["Bottom Left Y"]
+        br_x = self.perspective_values["Bottom Right X"]; br_y = self.perspective_values["Bottom Right Y"]
         dst_pts = np.float32([
             [0 + tl_x, 0 + tl_y],
             [w + tr_x, 0 + tr_y],
             [0 + bl_x, h + bl_y],
-            [w + br_x, h + br_y]
+            [w + br_x, h + br_y],
         ])
-
-        # Compute transform matrix and warp
         M = cv2.getPerspectiveTransform(src_pts, dst_pts)
         warped = cv2.warpPerspective(img, M, (w, h))
-
         result = Image.fromarray(warped).convert("RGBA")
         self.current_image = result
         self.update_image_preview(result)
-
-        # Save to undo stack only when user presses the button
         if not preview:
             self.save_state()
 
-
+    # =========================
+    # ADJUSTMENT HELPERS
+    # =========================
     def adjust_temperature(self, img, temperature):
-        img_array = np.array(img.convert('RGB'), dtype=np.float32)
-        
-        # Temperature adjustment: positive = warmer (more red/yellow), negative = cooler (more blue)
+        img_array = np.array(img.convert("RGB"), dtype=np.float32)
         if temperature > 0:
-            # Warmer: increase red, slight increase in green
-            img_array[:,:,0] = np.clip(img_array[:,:,0] + temperature * 2.55, 0, 255)
-            img_array[:,:,1] = np.clip(img_array[:,:,1] + temperature * 1.27, 0, 255)
+            img_array[:, :, 0] = np.clip(img_array[:, :, 0] + temperature * 2.55, 0, 255)
+            img_array[:, :, 1] = np.clip(img_array[:, :, 1] + temperature * 1.27, 0, 255)
         else:
-            # Cooler: increase blue
-            img_array[:,:,2] = np.clip(img_array[:,:,2] - temperature * 2.55, 0, 255)
-        
-        return Image.fromarray(img_array.astype('uint8'), mode='RGB').convert('RGBA')
-    
+            img_array[:, :, 2] = np.clip(img_array[:, :, 2] - temperature * 2.55, 0, 255)
+        return Image.fromarray(img_array.astype("uint8"), mode="RGB").convert("RGBA")
+
     def adjust_hue(self, img, shift_degrees):
-        # Convert to HSV (or HSL, but PIL uses HSL for color ops)
-        img_hsv = img.convert('HSV')
+        img_hsv = img.convert("HSV")
         img_array = np.array(img_hsv, dtype=np.uint8)
-        
-        # PIL's 'H' is 0-255, where 255 = 360 degrees.
-        # Shift degrees is -180 to 180, so we scale it.
         shift_pil_units = int(shift_degrees * (255 / 360)) % 256
-        
-        # Get the H channel (index 0)
-        hue_channel = img_array[:,:,0]
-        
-        # Apply the circular shift
+        hue_channel = img_array[:, :, 0]
         new_hue = (hue_channel.astype(np.int16) + shift_pil_units) % 256
-        
-        # Update array
-        img_array[:,:,0] = new_hue.astype(np.uint8)
-        
-        # Convert back to RGBA
-        return Image.fromarray(img_array, mode='HSV').convert('RGBA')
-        
+        img_array[:, :, 0] = new_hue.astype(np.uint8)
+        return Image.fromarray(img_array, mode="HSV").convert("RGBA")
+
     def adjust_tint(self, img, tint_value):
-        img_rgb = img.convert('RGB')
-        img_array = np.array(img_rgb, dtype=np.int16) # Use int16 to handle potential overflow/underflow
-        
-        # Normalize adjustment factor to a small fraction, e.g., max 50 units (out of 255)
-        # 100 slider value = 50 unit change.
+        img_rgb = img.convert("RGB")
+        img_array = np.array(img_rgb, dtype=np.int16)
         adj_factor = tint_value / 100.0 * 50
-        
-        # Positive tint = Magenta. Boost R and B, reduce G.
-        # Negative tint = Green. Boost G, reduce R and B.
-        
-        # R and B channels (index 0 and 2) get the positive factor
-        img_array[:,:,0] = np.clip(img_array[:,:,0] + adj_factor, 0, 255)
-        img_array[:,:,2] = np.clip(img_array[:,:,2] + adj_factor, 0, 255)
-        
-        # G channel (index 1) gets the opposite factor
-        img_array[:,:,1] = np.clip(img_array[:,:,1] - adj_factor, 0, 255)
-        
-        return Image.fromarray(img_array.astype('uint8'), mode='RGB').convert('RGBA')
-    
+        img_array[:, :, 0] = np.clip(img_array[:, :, 0] + adj_factor, 0, 255)
+        img_array[:, :, 2] = np.clip(img_array[:, :, 2] + adj_factor, 0, 255)
+        img_array[:, :, 1] = np.clip(img_array[:, :, 1] - adj_factor, 0, 255)
+        return Image.fromarray(img_array.astype("uint8"), mode="RGB").convert("RGBA")
+
     def adjust_vibrance(self, img, vibrance_value):
         if vibrance_value == 0:
             return img
-
-        img_rgb = img.convert('RGB')
-        factor = vibrance_value / 100.0 * 0.5 
-        
+        img_rgb = img.convert("RGB")
+        factor = vibrance_value / 100.0 * 0.5
         img_list = img_rgb.getdata()
-        
-        def adjust_vibrance_pixel(r, g, b, factor):
-            # Convert to HSV (normalized 0-1)
-            h, s, v = colorsys.rgb_to_hsv(r/255.0, g/255.0, b/255.0)
-            
-            # Vibrance adjustment logic:
-            # 1 - s gives a higher weight to low-saturation pixels.
-            # 1.5 power provides a stronger curve.
-            adjustment = factor * (1 - s)**1.5
+
+        def adjust_vibrance_pixel(r, g, b, f):
+            h, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+            adjustment = f * (1 - s) ** 1.5
             new_s = np.clip(s + adjustment, 0, 1)
-            
-            # Convert back to RGB
             r_out, g_out, b_out = colorsys.hsv_to_rgb(h, new_s, v)
-            return (int(r_out * 255), int(g_out * 255), int(b_out * 255))
-        
-        # Apply the function to all pixels
+            return int(r_out * 255), int(g_out * 255), int(b_out * 255)
+
         new_img_list = [adjust_vibrance_pixel(r, g, b, factor) for r, g, b in img_list]
-
-        # Create new image from the list
-        new_img = Image.new('RGB', img_rgb.size)
+        new_img = Image.new("RGB", img_rgb.size)
         new_img.putdata(new_img_list)
-        return new_img.convert('RGBA')
+        return new_img.convert("RGBA")
 
-    
     def adjust_highlights_shadows(self, img, highlights, shadows):
-        img_array = np.array(img.convert('RGB')) / 255.0  # Normalize to 0-1
-        
-        # Calculate Luminance (L)
-        luminance = 0.2126 * img_array[:,:,0] + 0.7152 * img_array[:,:,1] + 0.0722 * img_array[:,:,2]
-        
-        # Shadows adjustment
+        img_array = np.array(img.convert("RGB")) / 255.0
+        luminance = 0.2126 * img_array[:, :, 0] + 0.7152 * img_array[:, :, 1] + 0.0722 * img_array[:, :, 2]
         if shadows != 0:
-            # Map shadows (low luminance values) to a multiplier. 
-            # sigmoid function helps create a smooth roll-off.
-            # The closer to 0, the higher the mask value (up to 1).
-            shadow_mask = 1 / (1 + np.exp( (luminance - 0.25) / 0.1 ))
-            shadow_adj = (shadows / 100.0) * shadow_mask * 0.5 
-            
-            # Apply to image
+            shadow_mask = 1 / (1 + np.exp((luminance - 0.25) / 0.1))
+            shadow_adj = (shadows / 100.0) * shadow_mask * 0.5
             for i in range(3):
-                img_array[:,:,i] = np.clip(img_array[:,:,i] + shadow_adj, 0, 1)
-                
-        # Highlights adjustment
+                img_array[:, :, i] = np.clip(img_array[:, :, i] + shadow_adj, 0, 1)
         if highlights != 0:
-            # Map highlights (high luminance values) to a multiplier
-            # The closer to 1, the higher the mask value (up to 1).
-            highlight_mask = 1 / (1 + np.exp( (0.75 - luminance) / 0.1 ))
+            highlight_mask = 1 / (1 + np.exp((0.75 - luminance) / 0.1))
             highlight_adj = (highlights / 100.0) * highlight_mask * 0.5
-            
-            # Apply to image
             for i in range(3):
-                img_array[:,:,i] = np.clip(img_array[:,:,i] + highlight_adj, 0, 1)
+                img_array[:, :, i] = np.clip(img_array[:, :, i] + highlight_adj, 0, 1)
+        return Image.fromarray((img_array * 255).astype(np.uint8), mode="RGB").convert("RGBA")
 
-        # Convert back to PIL image
-        return Image.fromarray((img_array * 255).astype(np.uint8), mode='RGB').convert('RGBA')
-
-    
     def adjust_levels(self, img, blacks, whites):
         img_array = np.array(img)
-        
-        # Adjust blacks (shadows)
         if blacks != 0:
             adjustment = blacks / 100 * 50
-            img_array = np.where(img_array < 128, 
-                                np.clip(img_array + adjustment, 0, 255), 
-                                img_array)
-        
-        # Adjust whites (highlights)
+            img_array = np.where(img_array < 128, np.clip(img_array + adjustment, 0, 255), img_array)
         if whites != 0:
             adjustment = whites / 100 * 50
-            img_array = np.where(img_array > 128, 
-                                np.clip(img_array + adjustment, 0, 255), 
-                                img_array)
-        
-        return Image.fromarray(img_array.astype('uint8'), mode=img.mode)
-    
+            img_array = np.where(img_array > 128, np.clip(img_array + adjustment, 0, 255), img_array)
+        return Image.fromarray(img_array.astype("uint8"), mode=img.mode)
+
     def add_noise(self, img, amount):
         arr = np.array(img)
         noise = np.random.normal(0, amount, arr.shape).astype(np.int16)
         noisy = np.clip(arr.astype(np.int16) + noise, 0, 255).astype(np.uint8)
         return Image.fromarray(noisy, mode=img.mode)
-    
+
     def add_vignette(self, img, strength):
         width, height = img.size
-        
-        # Create radial gradient
         x = np.linspace(-1, 1, width)
         y = np.linspace(-1, 1, height)
         X, Y = np.meshgrid(x, y)
-        radius = np.sqrt(X**2 + Y**2)
-        
-        # Create vignette mask
+        radius = np.sqrt(X ** 2 + Y ** 2)
         vignette = 1 - (radius * strength)
         vignette = np.clip(vignette, 0, 1)
-        
-        # Apply vignette
         img_array = np.array(img).astype(float)
-        for i in range(min(3, img_array.shape[2])):  # RGB channels only
-            img_array[:,:,i] *= vignette
-        
-        return Image.fromarray(img_array.astype('uint8'), mode=img.mode)
-    
+        for i in range(min(3, img_array.shape[2])):  # apply ke RGB saja
+            img_array[:, :, i] *= vignette
+        return Image.fromarray(img_array.astype("uint8"), mode=img.mode)
+
+    # =========================
+    # MORPH / FILTERS
+    # =========================
     def apply_morphology(self, operation):
         if self.current_image is None:
             return
-        self.save_state()
-        # Convert to numpy array
-        img_array = np.array(self.current_image.convert('RGB'))
+        img_array = np.array(self.current_image.convert("RGB"))
         kernel_size = int(self.kernel_size_var.get())
+        if kernel_size < 1:
+            kernel_size = 1
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+            self.kernel_size_var.set(kernel_size)
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
 
-        # Ask user for confirmation
-        confirm = messagebox.askyesno(
-            "Apply Filter",
-            f"Are you sure you want to apply the '{operation}' filter with kernel size {kernel_size}?"
-        )
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply '{operation}'?")
         if not confirm:
             return
 
-        # Apply operation to each channel
+        self.save_state()
         result = np.zeros_like(img_array)
         for i in range(3):
-            channel = img_array[:,:,i]
+            channel = img_array[:, :, i]
+            if operation == "erosion":
+                result[:, :, i] = cv2.erode(channel, kernel, iterations=1)
+            elif operation == "dilation":
+                result[:, :, i] = cv2.dilate(channel, kernel, iterations=1)
+            elif operation == "opening":
+                result[:, :, i] = cv2.morphologyEx(channel, cv2.MORPH_OPEN, kernel)
+            elif operation == "closing":
+                result[:, :, i] = cv2.morphologyEx(channel, cv2.MORPH_CLOSE, kernel)
+            elif operation == "gradient":
+                result[:, :, i] = cv2.morphologyEx(channel, cv2.MORPH_GRADIENT, kernel)
 
-            if operation == 'erosion':
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                result[:,:,i] = cv2.erode(channel, kernel, iterations=1)
-            elif operation == 'dilation':
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                result[:,:,i] = cv2.dilate(channel, kernel, iterations=1)
-            elif operation == 'opening':
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                result[:,:,i] = cv2.morphologyEx(channel, cv2.MORPH_OPEN, kernel)
-            elif operation == 'closing':
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                result[:,:,i] = cv2.morphologyEx(channel, cv2.MORPH_CLOSE, kernel)
-            elif operation == 'gradient':
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                result[:,:,i] = cv2.morphologyEx(channel, cv2.MORPH_GRADIENT, kernel)
-            elif operation == 'mean_filter':
-                # Mean filter using box filter
-                result[:,:,i] = cv2.blur(channel, (kernel_size, kernel_size))
-            elif operation == 'median_filter':
-                # Median filter - kernel size must be odd
-                ksize = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
-                result[:,:,i] = cv2.medianBlur(channel, ksize)
-            elif operation == 'max_filter':
-                # Max filter (dilation with ones kernel)
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                result[:,:,i] = cv2.dilate(channel, kernel)
-            elif operation == 'min_filter':
-                # Min filter (erosion with ones kernel)
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                result[:,:,i] = cv2.erode(channel, kernel)
-
-        self.current_image = Image.fromarray(result, mode='RGB').convert('RGBA')
+        self.current_image = Image.fromarray(result, mode="RGB").convert("RGBA")
         self.update_image_preview()
-    
+        self._update_toolbar_state()
+
     def apply_filter(self, filter_name):
-    
         if self.current_image is None:
             return
-
         img = self.current_image
-        self.save_state()
-        # Ask user for confirmation
-        confirm = messagebox.askyesno(
-            "Apply Filter",
-            f"Are you sure you want to apply the '{filter_name}' filter?"
-        )
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply '{filter_name}'?")
         if not confirm:
             return
 
-        if filter_name == 'grayscale':
-            img = ImageOps.grayscale(img).convert('RGBA')
-        elif filter_name == 'sepia':
+        self.save_state()
+        if filter_name == "grayscale":
+            img = ImageOps.grayscale(img).convert("RGBA")
+        elif filter_name == "sepia":
             img = self.apply_sepia(img)
-        elif filter_name == 'edge':
+        elif filter_name == "edge":
             img = img.filter(ImageFilter.FIND_EDGES)
-        elif filter_name == 'emboss':
+        elif filter_name == "emboss":
             img = img.filter(ImageFilter.EMBOSS)
-        elif filter_name == 'sharpen':
+        elif filter_name == "sharpen":
             img = img.filter(ImageFilter.SHARPEN)
-        elif filter_name == 'sobel':
-            img = self.apply_sobel(img)
-        elif filter_name == 'prewitt':
-            img = self.apply_prewitt(img)
-        elif filter_name == 'laplacian':
-            img = self.apply_laplacian(img)
 
         self.current_image = img
         self.update_image_preview()
+        self._update_toolbar_state()
 
-    def apply_sobel(self, img):
-        # Convert to grayscale first
-        img_gray = img.convert('L')
-        img_array = np.array(img_gray, dtype=np.float32)
-
-        # Apply Sobel operators
-        sobel_x = cv2.Sobel(img_array, cv2.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2.Sobel(img_array, cv2.CV_64F, 0, 1, ksize=3)
-
-        # Calculate magnitude
-        magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
-
-        # Normalize to 0-255
-        magnitude = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
-
-        # Convert back to PIL Image
-        return Image.fromarray(magnitude.astype(np.uint8)).convert('RGBA')
-
-    def apply_prewitt(self, img):
-        # Convert to grayscale first
-        img_gray = img.convert('L')
-        img_array = np.array(img_gray, dtype=np.float32)
-
-        # Prewitt kernels
-        kernel_x = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]])
-        kernel_y = np.array([[-1, -1, -1], [0, 0, 0], [1, 1, 1]])
-
-        # Apply Prewitt operators
-        prewitt_x = cv2.filter2D(img_array, cv2.CV_64F, kernel_x)
-        prewitt_y = cv2.filter2D(img_array, cv2.CV_64F, kernel_y)
-
-        # Calculate magnitude
-        magnitude = np.sqrt(prewitt_x**2 + prewitt_y**2)
-
-        # Normalize to 0-255
-        magnitude = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
-
-        # Convert back to PIL Image
-        return Image.fromarray(magnitude.astype(np.uint8)).convert('RGBA')
-
-    def apply_laplacian(self, img):
-        # Convert to grayscale first
-        img_gray = img.convert('L')
-        img_array = np.array(img_gray, dtype=np.float32)
-
-        # Apply Laplacian
-        laplacian = cv2.Laplacian(img_array, cv2.CV_64F, ksize=3)
-
-        # Take absolute value and normalize
-        laplacian = np.absolute(laplacian)
-        laplacian = cv2.normalize(laplacian, None, 0, 255, cv2.NORM_MINMAX)
-
-        # Convert back to PIL Image
-        return Image.fromarray(laplacian.astype(np.uint8)).convert('RGBA')
-    
     def apply_sepia(self, img):
-        img_array = np.array(img.convert('RGB'))
-        
-        # Sepia transformation matrix
+        img_array = np.array(img.convert("RGB"))
         sepia_filter = np.array([[0.393, 0.769, 0.189],
                                  [0.349, 0.686, 0.168],
                                  [0.272, 0.534, 0.131]])
-        
         sepia_img = img_array.dot(sepia_filter.T)
         sepia_img = np.clip(sepia_img, 0, 255).astype(np.uint8)
-        
-        return Image.fromarray(sepia_img, mode='RGB').convert('RGBA')
-    
+        return Image.fromarray(sepia_img, mode="RGB").convert("RGBA")
+
     def update_transform(self, transform_type, value):
         self.transform_values[transform_type] = float(value)
         self.apply_transforms()
-    
+
     def apply_transforms(self):
         if self.original_image is None:
             return
-        
         img = self.original_image.copy()
         width, height = img.size
-        
-        # Apply resize
-        resize_factor = self.transform_values['resize'] / 100.0
+
+        resize_factor = self.transform_values["resize"] / 100.0
         if resize_factor != 1.0:
             new_width = int(width * resize_factor)
             new_height = int(height * resize_factor)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Apply rotation
-        rotate_angle = self.transform_values['rotate']
+
+        rotate_angle = self.transform_values["rotate"]
         if rotate_angle != 0:
             img = img.rotate(rotate_angle, expand=True, resample=Image.Resampling.BICUBIC)
-        
-        # Apply scale
-        scale_x = self.transform_values['scale_x'] / 100.0
-        scale_y = self.transform_values['scale_y'] / 100.0
+
+        scale_x = self.transform_values["scale_x"] / 100.0
+        scale_y = self.transform_values["scale_y"] / 100.0
         if scale_x != 1.0 or scale_y != 1.0:
             new_width = int(img.width * scale_x)
             new_height = int(img.height * scale_y)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
+
         self.current_image = img
         self.update_image_preview()
-    
+
+    # =========================
+    # INTERACTIVE TOOLS
+    # =========================
     def interactive_crop(self):
         if self.current_image is None:
             messagebox.showwarning("Warning", "No image loaded")
             return
-        
-        # Save state before cropping
         self.save_state()
-        
-        # Create cropping window
+
         crop_window = tk.Toplevel(self)
         crop_window.title("Interactive Crop")
         crop_window.geometry("800x600")
-        crop_window.configure(bg='#2b2b2b')
-        
-        # Display image for cropping
-        crop_canvas = tk.Canvas(crop_window, bg='#404040', cursor="crosshair")
+        crop_window.configure(bg="#1b2230")
+
+        crop_canvas = tk.Canvas(crop_window, bg="#273449", cursor="crosshair", highlightthickness=0)
         crop_canvas.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Display current image
+
         display_img = self.current_image.copy()
         display_img.thumbnail((700, 500), Image.Resampling.LANCZOS)
-        self.crop_preview_img = ImageTk.PhotoImage(display_img)
-        crop_canvas.create_image(400, 300, image=self.crop_preview_img, anchor=tk.CENTER)
-        
-        # Crop selection variables
-        self.crop_start_x = None
-        self.crop_start_y = None
+        self._crop_preview_tk = ImageTk.PhotoImage(display_img)
+        img_id = crop_canvas.create_image(0, 0, image=self._crop_preview_tk, anchor=tk.NW)
+
+        def center_image(_=None):
+            cw, ch = crop_canvas.winfo_width(), crop_canvas.winfo_height()
+            x = (cw - display_img.width) // 2
+            y = (ch - display_img.height) // 2
+            crop_canvas.coords(img_id, x, y)
+
+        crop_canvas.bind("<Configure>", center_image)
+        center_image()
+
+        self.crop_start = None
         self.crop_rect = None
-        
+
         def start_crop(event):
-            self.crop_start_x = event.x
-            self.crop_start_y = event.y
-            self.crop_rect = crop_canvas.create_rectangle(
-                event.x, event.y, event.x, event.y,
-                outline='red', width=2, dash=(4, 4)
-            )
-        
-        def update_crop(event):
+            self.crop_start = (event.x, event.y)
             if self.crop_rect:
-                crop_canvas.coords(
-                    self.crop_rect,
-                    self.crop_start_x, self.crop_start_y,
-                    event.x, event.y
-                )
-        
-        def apply_crop(event):
-            if not self.crop_rect:
+                crop_canvas.delete(self.crop_rect)
+            self.crop_rect = crop_canvas.create_rectangle(event.x, event.y, event.x, event.y,
+                                                          outline="cyan", width=2, dash=(4, 4))
+
+        def update_crop(event):
+            if self.crop_rect and self.crop_start:
+                crop_canvas.coords(self.crop_rect, self.crop_start[0], self.crop_start[1], event.x, event.y)
+
+        def apply_crop(_):
+            if not self.crop_rect or not self.crop_start:
                 return
-            
-            # Get crop coordinates
             x1, y1, x2, y2 = crop_canvas.coords(self.crop_rect)
-            
-            # Convert to image coordinates
-            img_width, img_height = self.current_image.size
-            canvas_width = crop_canvas.winfo_width()
-            canvas_height = crop_canvas.winfo_height()
-            
-            scale_x = img_width / canvas_width
-            scale_y = img_height / canvas_height
-            
-            # Calculate actual crop coordinates
-            crop_x1 = int(min(x1, x2) * scale_x)
-            crop_y1 = int(min(y1, y2) * scale_y)
-            crop_x2 = int(max(x1, x2) * scale_x)
-            crop_y2 = int(max(y1, y2) * scale_y)
-            
-            # Ensure valid crop area
-            if crop_x2 - crop_x1 > 10 and crop_y2 - crop_y1 > 10:
-                self.current_image = self.current_image.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+            cw, ch = crop_canvas.winfo_width(), crop_canvas.winfo_height()
+            off_x = (cw - display_img.width) // 2
+            off_y = (ch - display_img.height) // 2
+            sx = self.current_image.width / display_img.width
+            sy = self.current_image.height / display_img.height
+
+            rx1 = int(max(0, min(self.current_image.width, (min(x1, x2) - off_x) * sx)))
+            ry1 = int(max(0, min(self.current_image.height, (min(y1, y2) - off_y) * sy)))
+            rx2 = int(max(0, min(self.current_image.width, (max(x1, x2) - off_x) * sx)))
+            ry2 = int(max(0, min(self.current_image.height, (max(y1, y2) - off_y) * sy)))
+
+            if rx2 - rx1 > 10 and ry2 - ry1 > 10:
+                self.current_image = self.current_image.crop((rx1, ry1, rx2, ry2))
                 self.update_image_preview()
                 crop_window.destroy()
+                self._update_toolbar_state()
             else:
                 messagebox.showwarning("Warning", "Please select a larger crop area")
-        
-        # Bind mouse events
+
         crop_canvas.bind("<ButtonPress-1>", start_crop)
         crop_canvas.bind("<B1-Motion>", update_crop)
         crop_canvas.bind("<ButtonRelease-1>", apply_crop)
-        
-        # Instructions
-        instructions = ttk.Label(crop_window, text="Click and drag to select crop area, release to apply", 
-                                background='#2b2b2b', foreground='white')
-        instructions.pack(pady=5)
+
+        ttk.Label(crop_window, text="Click & drag to select, release to crop", style="TLabel").pack(pady=5)
 
     def interactive_draw(self):
-        """Interactive drawing popup — optimized, with working color picker and text size."""
         if self.current_image is None:
             messagebox.showwarning("Warning", "No image loaded")
             return
-
-        # Save pre-draw state for undo
         self.save_state()
 
         draw_window = tk.Toplevel(self)
         draw_window.title("Interactive Drawing & Annotation")
         draw_window.geometry("900x700")
-        draw_window.configure(bg="#2b2b2b")
+        draw_window.configure(bg="#1b2230")
 
-        # Full-size working copy (real image) and scaled preview
         working_img = self.current_image.convert("RGBA").copy()
         preview_img = working_img.copy()
         preview_img.thumbnail((800, 600), Image.Resampling.LANCZOS)
-
         self.draw_preview_img = preview_img
         self.draw_preview_tk = ImageTk.PhotoImage(preview_img)
 
-        canvas = tk.Canvas(draw_window, bg="#404040", cursor="crosshair")
+        canvas = tk.Canvas(draw_window, bg="#273449", cursor="crosshair", highlightthickness=0)
         canvas.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        # initial create - actual center drawing happens in refresh
         canvas.create_image(450, 350, image=self.draw_preview_tk, anchor=tk.CENTER)
 
-        # ===== Toolbar =====
         toolbar = ttk.Frame(draw_window)
         toolbar.pack(fill=tk.X, pady=5)
 
@@ -1419,54 +1240,47 @@ class AdvancedImageProcessor(tk.Tk):
         self.draw_color = "#ff0000"
         self.brush_size = tk.IntVar(value=3)
         self.text_to_add = tk.StringVar(value="Sample Text")
-        self.text_size = tk.IntVar(value=36)  # default text size
+        self.text_size = tk.IntVar(value=36)
 
-        # Tools radio buttons
         for tool in ["freehand", "line", "rectangle", "circle", "text", "fill"]:
-            ttk.Radiobutton(toolbar, text=tool.title(),
-                            variable=self.drawing_tool, value=tool).pack(side=tk.LEFT, padx=4)
+            ttk.Radiobutton(toolbar, text=tool.title(), variable=self.drawing_tool, value=tool).pack(side=tk.LEFT, padx=4)
 
-        # Brush size
         ttk.Label(toolbar, text="Brush:").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Spinbox(toolbar, from_=1, to=50, textvariable=self.brush_size, width=4).pack(side=tk.LEFT, padx=4)
 
-        # Color swatch + button
         color_swatch = tk.Canvas(toolbar, width=28, height=18, highlightthickness=1)
         color_swatch.create_rectangle(0, 0, 28, 18, fill=self.draw_color, outline="black")
         color_swatch.pack(side=tk.LEFT, padx=(8, 4))
-        ttk.Button(toolbar, text="Color", command=lambda: self.pick_color(draw_window, color_swatch)).pack(side=tk.LEFT)
+        ttk.Button(toolbar, text="Color", style="Accent.TButton",
+                   command=lambda: self.pick_color(draw_window, color_swatch)).pack(side=tk.LEFT)
 
-        # Text input and size
         ttk.Entry(toolbar, textvariable=self.text_to_add, width=20).pack(side=tk.LEFT, padx=6)
         ttk.Label(toolbar, text="Text size:").pack(side=tk.LEFT, padx=(6, 0))
         ttk.Spinbox(toolbar, from_=8, to=200, textvariable=self.text_size, width=5).pack(side=tk.LEFT, padx=4)
 
-        # Apply / Cancel
-        ttk.Button(toolbar, text="Apply",
-                   command=lambda: self._apply_direct_drawing(working_img, draw_window)).pack(side=tk.RIGHT, padx=6)
-        ttk.Button(toolbar, text="Cancel", command=draw_window.destroy).pack(side=tk.RIGHT)
+        ttk.Button(toolbar, text="Apply", style="Accent.TButton",
+                   command=lambda: self._apply_direct_drawing(working_img, draw_window)
+                   ).pack(side=tk.RIGHT, padx=6)
+        ttk.Button(toolbar, text="Cancel", style="Accent.TButton", command=draw_window.destroy).pack(side=tk.RIGHT)
 
-        # ===== Drawing setup =====
         draw_layer = Image.new("RGBA", working_img.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(draw_layer)
 
         scale_x = working_img.width / preview_img.width
         scale_y = working_img.height / preview_img.height
+
         self._draw_layer = draw_layer
         self._working_img = working_img
-
         self.last_point = None
         self._refresh_pending = False
         self._temp_shape = None
 
         def canvas_to_image_coords(x, y):
-            # Map canvas coords to original image coords (account for centered preview)
             offset_x = (canvas.winfo_width() - preview_img.width) // 2
             offset_y = (canvas.winfo_height() - preview_img.height) // 2
             return int((x - offset_x) * scale_x), int((y - offset_y) * scale_y)
 
         def refresh_preview_debounced():
-            """Throttled preview updater for smoother drawing."""
             if self._refresh_pending:
                 return
             self._refresh_pending = True
@@ -1481,7 +1295,7 @@ class AdvancedImageProcessor(tk.Tk):
                                     image=self.draw_preview_tk, anchor=tk.CENTER)
                 self._refresh_pending = False
 
-            canvas.after(50, _update)  # redraw ~20fps
+            canvas.after(50, _update)
 
         def on_press(e):
             self.last_point = (e.x, e.y)
@@ -1500,26 +1314,27 @@ class AdvancedImageProcessor(tk.Tk):
             tool = self.drawing_tool.get()
             if not self.last_point:
                 return
-
             if tool == "freehand":
                 x1, y1 = canvas_to_image_coords(*self.last_point)
                 x2, y2 = canvas_to_image_coords(e.x, e.y)
                 draw.line((x1, y1, x2, y2), fill=self.draw_color, width=self.brush_size.get())
                 self.last_point = (e.x, e.y)
                 refresh_preview_debounced()
-
             elif tool in ("rectangle", "circle", "line"):
                 if self._temp_shape:
                     canvas.delete(self._temp_shape)
                 if tool == "rectangle":
-                    self._temp_shape = canvas.create_rectangle(self.last_point[0], self.last_point[1], e.x, e.y,
-                                                               outline=self.draw_color, width=self.brush_size.get())
+                    self._temp_shape = canvas.create_rectangle(self.last_point[0], self.last_point[1],
+                                                               e.x, e.y, outline=self.draw_color,
+                                                               width=self.brush_size.get())
                 elif tool == "circle":
-                    self._temp_shape = canvas.create_oval(self.last_point[0], self.last_point[1], e.x, e.y,
-                                                          outline=self.draw_color, width=self.brush_size.get())
+                    self._temp_shape = canvas.create_oval(self.last_point[0], self.last_point[1],
+                                                          e.x, e.y, outline=self.draw_color,
+                                                          width=self.brush_size.get())
                 elif tool == "line":
-                    self._temp_shape = canvas.create_line(self.last_point[0], self.last_point[1], e.x, e.y,
-                                                          fill=self.draw_color, width=self.brush_size.get())
+                    self._temp_shape = canvas.create_line(self.last_point[0], self.last_point[1],
+                                                          e.x, e.y, fill=self.draw_color,
+                                                          width=self.brush_size.get())
 
         def on_release(e):
             tool = self.drawing_tool.get()
@@ -1542,53 +1357,42 @@ class AdvancedImageProcessor(tk.Tk):
         canvas.bind("<ButtonRelease-1>", on_release)
 
     def pick_color(self, parent, swatch_widget=None):
-        """Open color chooser and update swatch + active color."""
         from tkinter import colorchooser
         color = colorchooser.askcolor(title="Choose Color", parent=parent)
         if color and color[1]:
-            self.draw_color = color[1]  # e.g. "#rrggbb"
+            self.draw_color = color[1]
             if swatch_widget is not None:
                 swatch_widget.delete("all")
                 swatch_widget.create_rectangle(0, 0, 28, 18, fill=self.draw_color, outline="black")
 
     def _get_font(self, size):
-        """Return a PIL.ImageFont (try common TTFs, fall back to default)."""
-        from PIL import ImageFont
         candidates = ["arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"]
         for f in candidates:
             try:
                 return ImageFont.truetype(f, size)
             except Exception:
                 continue
-        # fallback: default font (size won't change)
         return ImageFont.load_default()
 
     def _apply_direct_drawing(self, working_img, window):
-        """Merge drawn layer directly with image and save state."""
         if hasattr(self, "_draw_layer"):
             merged = Image.alpha_composite(working_img.convert("RGBA"), self._draw_layer.convert("RGBA"))
             self.current_image = merged
             self.update_image_preview()
-            # Save the new state so Undo works
             self.save_state()
-        window.destroy()
+            self._update_toolbar_state()
+            window.destroy()
 
     def _bucket_fill(self, img, x, y, color):
-        """Fast flood fill using NumPy (works on RGBA Image pasted as array)."""
-        import numpy as np
-        pixels = np.array(img)  # shape (h, w, 4)
+        pixels = np.array(img)  # (h, w, 4)
         h, w = pixels.shape[:2]
         if not (0 <= x < w and 0 <= y < h):
             return
-
         target = pixels[y, x].copy()
-        # parse color "#rrggbb" to RGBA
         fill_rgb = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
         fill = np.array(fill_rgb + [255], dtype=np.uint8)
-
         if np.all(target == fill):
             return
-
         mask = np.zeros((h, w), dtype=bool)
         stack = [(x, y)]
         while stack:
@@ -1600,112 +1404,424 @@ class AdvancedImageProcessor(tk.Tk):
         img.paste(Image.fromarray(pixels, "RGBA"))
 
     def reflect(self, direction):
-        """Apply reflection (flip)"""
         if self.current_image is None:
             return
-        
-        # Save state before reflection
         self.save_state()
-        
-        if direction == 'horizontal':
+        if direction == "horizontal":
             self.current_image = ImageOps.mirror(self.current_image)
-        elif direction == 'vertical':
+        elif direction == "vertical":
             self.current_image = ImageOps.flip(self.current_image)
-        
         self.update_image_preview()
-    
+        self._update_toolbar_state()
+
     def _adjust_preview(self, value=None):
-        """Apply color adjustments and update preview"""
         if self.current_image is None:
             return
         img = self.apply_all_adjustments()
         self.update_image_preview(img)
-        self._update_histogram(img)
-    
+
     def update_image_preview(self, img=None):
-        """Update the image display with optional custom image"""
-        self._update_histogram(img)
         if img is None:
             img = self.current_image
-
         if img is None:
             return
-
-        # Get current size of the center frame
         try:
-            max_display_width = self.center_frame.winfo_width() - 20 # Padding
-            max_display_height = self.center_frame.winfo_height() - 20 # Padding
-        except:
+            max_display_width = max(100, self.center_frame.winfo_width() - 40)
+            max_display_height = max(100, self.center_frame.winfo_height() - 40)
+        except Exception:
             max_display_width = 800
             max_display_height = 600
 
-        # Calculate display size
-        display_width = img.width
-        display_height = img.height
-
-        # Apply maximum size limits
-        if display_width > max_display_width or display_height > max_display_height:
-            # Calculate scaling factor to fit within max dimensions
-            scale_x = max_display_width / display_width
-            scale_y = max_display_height / display_height
-            scale_factor = min(scale_x, scale_y)
-
-            display_width = int(display_width * scale_factor)
-            display_height = int(display_height * scale_factor)
-
-        # Ensure minimum display size
-        display_width = max(display_width, 100)
-        display_height = max(display_height, 100)
-
-        # Resize for display
         display_img = img.copy()
-        display_img.thumbnail((display_width, display_height), Image.Resampling.LANCZOS)
-
-        # Convert to PhotoImage
+        display_img.thumbnail((max_display_width, max_display_height), Image.Resampling.LANCZOS)
         self.preview_image_tk = ImageTk.PhotoImage(display_img)
         self.image_label.configure(image=self.preview_image_tk)
-    
+
+        self._update_histogram(img)
+
     def reset_image(self):
         if self.original_image is not None:
             self.current_image = self.original_image.copy()
             self.reset_all_sliders()
             self.update_image_preview()
-    
+            self._update_toolbar_state()
+
     def reset_all_sliders(self):
-        # Reset transform values
-        self.transform_values = {
-            'resize': 100,
-            'rotate': 0,
-            'scale_x': 100,
-            'scale_y': 100,
-        }
-        
-        # Reset all slider widgets
+        self.transform_values = {"resize": 100, "rotate": 0, "scale_x": 100, "scale_y": 100}
         for key, (slider, entry, var, default) in self.slider_widgets.items():
             var.set(default)
-        
-        # Reset color adjustment variables
-        self.exposure_var.set(0)
-        self.highlights_var.set(0)
-        self.shadows_var.set(0)
-        self.contrast_var.set(0)
-        self.brightness_var.set(0)
-        self.blacks_var.set(0)
-        self.whites_var.set(0)
-        self.hue_var.set(0)
-        self.tint_var.set(0)
-        self.saturation_var.set(0)
-        self.temperature_var.set(0)
-        self.vibrance_var.set(0)
-        self.blur_var.set(0)
-        self.noise_var.set(0)
-        self.vignette_var.set(0)
-        if hasattr(self, "perspective_values"):
-            for k in self.perspective_values:
-                self.perspective_values[k] = 0
+            try:
+                entry.delete(0, tk.END)
+                entry.insert(0, str(default))
+            except Exception:
+                pass
+        for var in [
+            self.exposure_var, self.highlights_var, self.shadows_var, self.contrast_var,
+            self.brightness_var, self.blacks_var, self.whites_var, self.hue_var, self.tint_var,
+            self.saturation_var, self.temperature_var, self.vibrance_var, self.blur_var,
+            self.noise_var, self.vignette_var
+        ]:
+            var.set(0)
+        for k in self.perspective_values:
+            self.perspective_values[k] = 0.0
 
+    # =========================
+    # FREQUENCY DOMAIN
+    # =========================
+    def _apply_fft(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+        
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply 'fourier transform'?")
+        if not confirm:
+            return
+        
+        img_gray = self.current_image.convert("L")
+        arr = np.array(img_gray)
+        f = np.fft.fft2(arr)
+        fshift = np.fft.fftshift(f)
+        magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
+        mag_img = Image.fromarray(np.uint8(magnitude_spectrum / np.max(magnitude_spectrum) * 255))
+        self.current_image = mag_img.convert("RGBA")
+        self.update_image_preview(self.current_image)
+        self._update_toolbar_state()
+
+    def _apply_ifft(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+        
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply 'inverse fourier transform'?")
+        if not confirm:
+            return
+        img_gray = self.current_image.convert("L")
+        arr = np.array(img_gray)
+        f = np.fft.fft2(arr)
+        fshift = np.fft.fftshift(f)
+        ishift = np.fft.ifftshift(fshift)
+        img_back = np.fft.ifft2(ishift)
+        img_back = np.abs(img_back)
+        result = Image.fromarray(np.uint8(img_back))
+        self.current_image = result.convert("RGBA")
+        self.update_image_preview(self.current_image)
+        self._update_toolbar_state()
+
+    def _apply_high_pass(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply 'High Pass'?")
+        if not confirm:
+            return
+        
+        img_gray = self.current_image.convert("L")
+        arr = np.array(img_gray)
+        h, w = arr.shape
+        f = np.fft.fft2(arr)
+        fshift = np.fft.fftshift(f)
+
+        mask = np.ones((h, w), np.uint8)
+        r = max(1, min(h, w) // 20)
+        crow, ccol = h // 2, w // 2
+        mask[crow - r:crow + r, ccol - r:ccol + r] = 0
+
+        fshift = fshift * mask
+        img_back = np.fft.ifft2(np.fft.ifftshift(fshift))
+        img_back = np.abs(img_back)
+        result = Image.fromarray(np.uint8(np.clip(img_back, 0, 255)))
+        self.current_image = result.convert("RGBA")
+        self.update_image_preview(self.current_image)
+        self._update_toolbar_state()
+
+    def _apply_low_pass(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply 'low pass'?")
+        if not confirm:
+            return
+        img_gray = self.current_image.convert("L")
+        arr = np.array(img_gray)
+        h, w = arr.shape
+        f = np.fft.fft2(arr)
+        fshift = np.fft.fftshift(f)
+
+        mask = np.zeros((h, w), np.uint8)
+        r = max(1, min(h, w) // 20)
+        crow, ccol = h // 2, w // 2
+        mask[crow - r:crow + r, ccol - r:ccol + r] = 1
+
+        fshift = fshift * mask
+        img_back = np.fft.ifft2(np.fft.ifftshift(fshift))
+        img_back = np.abs(img_back)
+        result = Image.fromarray(np.uint8(np.clip(img_back, 0, 255)))
+        self.current_image = result.convert("RGBA")
+        self.update_image_preview(self.current_image)
+        self._update_toolbar_state()
+
+    # =========================
+    # SLIDER HELPER
+    # =========================
+    def _add_slider_with_entry(self, parent, label, key, min_val, max_val, default, command):
+        """Bikin baris kontrol: Label + Slider + Entry, sinkron + debounce."""
+        frame = ttk.Frame(parent)
+        frame.pack(fill=tk.X, padx=10, pady=6)
+        ttk.Label(frame, text=label).pack(anchor="w")
+
+        key_to_var = {
+            "exposure": self.exposure_var,
+            "highlights": self.highlights_var,
+            "shadows": self.shadows_var,
+            "contrast": self.contrast_var,
+            "brightness": self.brightness_var,
+            "blacks": self.blacks_var,
+            "whites": self.whites_var,
+            "hue": self.hue_var,
+            "tint": self.tint_var,
+            "saturation": self.saturation_var,
+            "temperature": self.temperature_var,
+            "vibrance": self.vibrance_var,
+            "blur": self.blur_var,
+            "noise": self.noise_var,
+            "vignette": self.vignette_var,
+            "resize": tk.DoubleVar(value=self.transform_values["resize"]),
+            "rotate": tk.DoubleVar(value=self.transform_values["rotate"]),
+            "scale_x": tk.DoubleVar(value=self.transform_values["scale_x"]),
+            "scale_y": tk.DoubleVar(value=self.transform_values["scale_y"]),
+        }
+        var = key_to_var.get(key, tk.DoubleVar(value=default))
+
+        row = ttk.Frame(frame)
+        row.pack(fill=tk.X)
+        slider = ttk.Scale(row, from_=min_val, to=max_val, orient=tk.HORIZONTAL, variable=var)
+        slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        entry = ttk.Entry(row, width=6)
+        entry.pack(side=tk.RIGHT, padx=6)
+        try:
+            entry.insert(0, f"{float(var.get()):.0f}")
+        except Exception:
+            entry.insert(0, str(default))
+
+        def _schedule():
+            if not callable(command):
+                return
+            aid = self._debounce_after_ids.get(key)
+            if aid:
+                try:
+                    self.after_cancel(aid)
+                except Exception:
+                    pass
+            self._debounce_after_ids[key] = self.after(120, lambda: command(var.get()))
+
+        def _on_var_change(*_):
+            try:
+                v = float(var.get())
+            except Exception:
+                v = default
+            v = max(min(v, max_val), min_val)
+            entry.delete(0, tk.END)
+            entry.insert(0, f"{int(v) if float(v).is_integer() else v}")
+
+        var.trace_add("write", _on_var_change)
+
+        def _commit_from_entry(_=None):
+            try:
+                v = float(entry.get())
+            except Exception:
+                v = default
+            v = max(min(v, max_val), min_val)
+            if var.get() != v:
+                var.set(v)
+            _schedule()
+
+        entry.bind("<Return>", _commit_from_entry)
+        entry.bind("<FocusOut>", _commit_from_entry)
+        slider.bind("<ButtonRelease-1>", lambda e: _schedule())
+        slider.bind("<KeyRelease>", lambda e: _schedule())
+
+        self.slider_widgets[key] = (slider, entry, var, default)
+        return var
+
+    # =========================
+    # ENHANCEMENT
+    # =========================
+    def _auto_enhance(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+        img_enhanced = ImageEnhance.Color(self.current_image).enhance(1.5)
+        img_enhanced = ImageEnhance.Contrast(img_enhanced).enhance(1.3)
+        img_enhanced = ImageEnhance.Brightness(img_enhanced).enhance(1.1)
+        self.current_image = img_enhanced.convert("RGBA")
+        self.update_image_preview(self.current_image)
+        self._update_toolbar_state()
+
+    def _sharpen_image(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply 'sharpen'?")
+        if not confirm:
+            return
+        
+        img_sharp = self.current_image.filter(ImageFilter.SHARPEN)
+        self.current_image = img_sharp.convert("RGBA")
+        self.update_image_preview(self.current_image)
+        self._update_toolbar_state()
+
+    def _denoise_image(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply 'denoise'?")
+        if not confirm:
+            return
+        img_denoised = self.current_image.filter(ImageFilter.GaussianBlur(radius=1.5))
+        self.current_image = img_denoised.convert("RGBA")
+        self.update_image_preview(self.current_image)
+        self._update_toolbar_state()
+
+    def _boost_detail(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply 'boost detail'?")
+        if not confirm:
+            return
+        
+        img_detail = self.current_image.filter(ImageFilter.DETAIL)
+        self.current_image = img_detail.convert("RGBA")
+        self.update_image_preview(self.current_image)
+        self._update_toolbar_state()
+
+    # =========================
+    # OVERLAY (global method)
+    # =========================
+    def _with_overlay(self, fn, *args, title="Processing..."):
+        try:
+            self._show_loading_overlay(title)
+            self.update_idletasks()
+            return fn(*args)
+        finally:
+            self._hide_loading_overlay()
+
+    def _show_loading_overlay(self, text="Processing..."):
+        if self._overlay is not None:
+            return
+        self._overlay = tk.Toplevel(self)
+        self._overlay.transient(self)
+        self._overlay.grab_set()
+        self._overlay.overrideredirect(True)
+        self._overlay.configure(bg="#0f1a24")
+
+        self.update_idletasks()
+        w, h = 320, 140
+        x = self.winfo_rootx() + (self.winfo_width() - w) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - h) // 2
+        self._overlay.geometry(f"{w}x{h}+{x}+{y}")
+
+        inner = tk.Frame(self._overlay, bg="#122235", highlightthickness=3, highlightbackground="#2ca7a4")
+        inner.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.92, relheight=0.8)
+
+        ttk.Label(inner, text=text, style="Header.TLabel").pack(pady=(18, 10))
+        pb = ttk.Progressbar(inner, mode="indeterminate", length=220)
+        pb.pack(pady=(6, 10))
+        pb.start(12)
+
+        border_colors = ["#2ca7a4", "#4c86a8", "#5661b3"]
+        idx = {"i": 0}
+
+        def pulse():
+            if not self._overlay:
+                return
+            inner.config(highlightbackground=border_colors[idx["i"] % len(border_colors)])
+            idx["i"] += 1
+            self.after(250, pulse)
+        pulse()
+        self._overlay.update()
+
+    def _hide_loading_overlay(self):
+        if self._overlay is not None:
+            try:
+                self._overlay.grab_release()
+            except Exception:
+                pass
+            self._overlay.destroy()
+            self._overlay = None
+
+    # =========================
+    # CANVAS BUTTON
+    # =========================
+    def _create_rounded_button(self, parent, text, command=None):
+    # Smaller width and height
+        canvas = tk.Canvas(parent, width=100, height=26, bg="#0e1117",
+                           bd=0, highlightthickness=0, relief="flat")
+
+        base_color = "#4b5563"
+        hover_color = "#64748b"
+        active_color = "#374151"
+        disabled_color = "#2b2f3a"
+        text_color = "white"
+        canvas._enabled = True
+
+        def draw_rounded_rect(cnv, x1, y1, x2, y2, r, color):
+            cnv.create_arc(x1, y1, x1 + 2 * r, y1 + 2 * r, start=90, extent=90, fill=color, outline=color)
+            cnv.create_arc(x2 - 2 * r, y1, x2, y1 + 2 * r, start=0, extent=90, fill=color, outline=color)
+            cnv.create_arc(x1, y2 - 2 * r, x1 + 2 * r, y2, start=180, extent=90, fill=color, outline=color)
+            cnv.create_arc(x2 - 2 * r, y2 - 2 * r, x2, y2, start=270, extent=90, fill=color, outline=color)
+            cnv.create_rectangle(x1 + r, y1, x2 - r, y2, fill=color, outline=color)
+            cnv.create_rectangle(x1, y1 + r, x2, y2 - r, fill=color, outline=color)
+
+        def paint(color):
+            canvas.delete("all")
+            # smaller rounded area
+            draw_rounded_rect(canvas, 2, 2, 98, 24, 8, color)
+            canvas.create_text(50, 13, text=text, fill=text_color, font=("Inter", 6, "bold"))
+
+        def on_enter(_):
+            if canvas._enabled:
+                paint(hover_color)
+
+        def on_leave(_):
+            paint(base_color if canvas._enabled else disabled_color)
+
+        def on_press(_):
+            if canvas._enabled:
+                paint(active_color)
+
+        def on_release(_):
+            if canvas._enabled:
+                paint(hover_color)
+                if command:
+                    command()
+
+        def set_enabled(enabled: bool):
+            canvas._enabled = bool(enabled)
+            paint(base_color if canvas._enabled else disabled_color)
+
+        canvas.set_enabled = set_enabled
+        paint(base_color)
+
+        canvas.bind("<Enter>", on_enter)
+        canvas.bind("<Leave>", on_leave)
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<ButtonRelease-1>", on_release)
+
+        return canvas
+
+
+
+    # =========================
+    # MAIN LOOP
+    # =========================
     def run(self):
         self.mainloop()
+
 
 if __name__ == "__main__":
     app = AdvancedImageProcessor()
