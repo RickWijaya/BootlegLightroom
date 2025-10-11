@@ -5,6 +5,7 @@ from PIL import Image, ImageTk, ImageFilter, ImageOps, ImageEnhance, ImageDraw
 import numpy as np
 import cv2
 import requests
+import io
 from io import BytesIO
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
