@@ -468,6 +468,10 @@ class AdvancedImageProcessor(tk.Tk):
             ("Opening",  'opening',  "Applying Opening..."),
             ("Closing",  'closing',  "Applying Closing..."),
             ("Gradient", 'gradient', "Applying Gradient..."),
+            ("Mean", 'mean', "Applying Mean Morphology..."),
+            ("Median", 'median', "Applying Median Morphology..."),
+            ("Max", 'max', "Applying Max Morphology..."),
+            ("Min", 'min', "Applying Min Morphology...")
         ]:
             ttk.Button(parent, text=text, style="Accent.TButton",
                        command=lambda op=op, title=title: self._with_overlay(self.apply_morphology, op, title=title)
@@ -496,7 +500,16 @@ class AdvancedImageProcessor(tk.Tk):
         ttk.Button(parent, text="Sharpen", style="Accent.TButton",
                    command=lambda: self._with_overlay(self.apply_filter, "sharpen", title="Sharpening...")
                    ).pack(fill=tk.X, padx=10, pady=4)
-
+        ttk.Button(parent, text="Sobel", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self.apply_filter, "sobel", title="Applying Sobel...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Prewitt", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self.apply_filter, "prewitt", title="Applying Prewitt...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Button(parent, text="Laplacian", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self.apply_filter, "laplacian", title="Applying Laplacian...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
+        
     def _build_frequency_tab(self, parent):
         ttk.Label(parent, text="Apply Frequency Transformations:").pack(anchor="w", padx=10, pady=(4, 6))
         ttk.Button(parent, text="Fourier Transform (FFT)", style="Accent.TButton",
@@ -526,6 +539,105 @@ class AdvancedImageProcessor(tk.Tk):
         ttk.Button(parent, text="Detail Boost", style="Accent.TButton",
                    command=lambda: self._with_overlay(self._boost_detail, title="Boosting Detail...")
                    ).pack(fill=tk.X, padx=10, pady=4)
+        ttk.Separator(parent).pack(fill=tk.X, padx=10, pady=8)
+        ttk.Label(parent, text="Additional Enhancements:").pack(anchor="w", padx=10, pady=(4, 6))
+
+        # === Gamma Correction ===
+        self._add_slider_with_entry(parent, "Gamma", "gamma", 0.1, 3.0, 1.0, None)
+        ttk.Button(parent, text="Apply Gamma Correction", style="Accent.TButton",
+                   command=self._apply_gamma_correction).pack(fill=tk.X, padx=10, pady=(4, 8))
+
+        # === Global Thresholding ===
+        self._add_slider_with_entry(parent, "Threshold", "threshold", 0, 255, 127, None)
+        ttk.Button(parent, text="Apply Global Thresholding", style="Accent.TButton",
+                   command=self._apply_global_threshold).pack(fill=tk.X, padx=10, pady=(4, 8))
+
+        # === Adaptive Thresholding ===
+        ttk.Button(parent, text="Apply Adaptive Thresholding", style="Accent.TButton",
+                   command=self._apply_adaptive_threshold).pack(fill=tk.X, padx=10, pady=(4, 8))
+
+        # === Smoothing ===
+        self._add_slider_with_entry(parent, "Smoothing Kernel", "smooth_kernel", 1, 15, 5, None)
+        ttk.Button(parent, text="Apply Smoothing", style="Accent.TButton",
+                   command=self._apply_smoothing).pack(fill=tk.X, padx=10, pady=(4, 8))
+        
+    def _apply_gamma_correction(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+
+        confirm = messagebox.askyesno("Apply Gamma Correction", "Are you sure you want to apply Gamma Correction?")
+        if not confirm:
+            return
+
+        gamma = float(self.slider_widgets.get("gamma", [None, None, None, 1.0])[2].get())
+        invGamma = 1.0 / gamma
+        table = np.array([(i / 255.0) ** invGamma * 255 for i in np.arange(256)]).astype("uint8")
+
+        img_array = np.array(self.current_image)
+        corrected = cv2.LUT(img_array, table)
+
+        self.save_state()
+        self.current_image = Image.fromarray(corrected).convert("RGBA")
+        self.update_image_preview()
+        self._update_toolbar_state()
+
+    def _apply_global_threshold(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+
+        confirm = messagebox.askyesno("Apply Global Threshold", "Are you sure you want to apply Thresholding?")
+        if not confirm:
+            return
+
+        val = int(self.slider_widgets.get("threshold", [None, None, None, 127])[2].get())
+        gray = cv2.cvtColor(np.array(self.current_image), cv2.COLOR_RGBA2GRAY)
+        _, thresh = cv2.threshold(gray, val, 255, cv2.THRESH_BINARY)
+
+        self.save_state()
+        self.current_image = Image.fromarray(thresh).convert("RGBA")
+        self.update_image_preview()
+        self._update_toolbar_state()
+
+    def _apply_adaptive_threshold(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+
+        confirm = messagebox.askyesno("Apply Adaptive Threshold", "Are you sure you want to apply Adaptive Thresholding?")
+        if not confirm:
+            return
+
+        gray = cv2.cvtColor(np.array(self.current_image), cv2.COLOR_RGBA2GRAY)
+        adaptive = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                         cv2.THRESH_BINARY, 11, 2)
+
+        self.save_state()
+        self.current_image = Image.fromarray(adaptive).convert("RGBA")
+        self.update_image_preview()
+        self._update_toolbar_state()
+
+
+    def _apply_smoothing(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+
+        confirm = messagebox.askyesno("Apply Smoothing", "Are you sure you want to apply Smoothing?")
+        if not confirm:
+            return
+
+        k = int(self.slider_widgets.get("smooth_kernel", [None, None, None, 5])[2].get())
+        if k % 2 == 0:
+            k += 1
+
+        result = cv2.GaussianBlur(np.array(self.current_image), (k, k), 0)
+
+        self.save_state()
+        self.current_image = Image.fromarray(result).convert("RGBA")
+        self.update_image_preview()
+        self._update_toolbar_state()
 
     def _cycle_tab(self, nb, step):
         try:
@@ -599,7 +711,6 @@ class AdvancedImageProcessor(tk.Tk):
             self._update_undo_redo_status()
         else:
             messagebox.showinfo("Info", "Nothing to redo")
-
     def _update_undo_redo_status(self):
         undo_count = len(self.undo_stack) - 1
         redo_count = len(self.redo_stack)
@@ -1070,6 +1181,17 @@ class AdvancedImageProcessor(tk.Tk):
                 result[:, :, i] = cv2.morphologyEx(channel, cv2.MORPH_CLOSE, kernel)
             elif operation == "gradient":
                 result[:, :, i] = cv2.morphologyEx(channel, cv2.MORPH_GRADIENT, kernel)
+            elif operation == 'mean':
+                result[:,:,i] = cv2.blur(channel, (kernel_size, kernel_size))
+            elif operation == 'median':
+                ksize = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
+                result[:,:,i] = cv2.medianBlur(channel, ksize)
+            elif operation == 'max':
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                result[:,:,i] = cv2.dilate(channel, kernel)
+            elif operation == 'min':
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                result[:,:,i] = cv2.erode(channel, kernel)
 
         self.current_image = Image.fromarray(result, mode="RGB").convert("RGBA")
         self.update_image_preview()
@@ -1094,11 +1216,72 @@ class AdvancedImageProcessor(tk.Tk):
             img = img.filter(ImageFilter.EMBOSS)
         elif filter_name == "sharpen":
             img = img.filter(ImageFilter.SHARPEN)
+        elif filter_name == 'sobel':
+            img = self.apply_sobel(img)
+        elif filter_name == 'prewitt':
+            img = self.apply_prewitt(img)
+        elif filter_name == 'laplacian':
+            img = self.apply_laplacian(img)
 
         self.current_image = img
         self.update_image_preview()
         self._update_toolbar_state()
 
+    def apply_sobel(self, img):
+        # Convert to grayscale first
+        img_gray = img.convert('L')
+        img_array = np.array(img_gray, dtype=np.float32)
+
+        # Apply Sobel operators
+        sobel_x = cv2.Sobel(img_array, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(img_array, cv2.CV_64F, 0, 1, ksize=3)
+
+        # Calculate magnitude
+        magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
+
+        # Normalize to 0-255
+        magnitude = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
+
+        # Convert back to PIL Image
+        return Image.fromarray(magnitude.astype(np.uint8)).convert('RGBA')
+
+    def apply_prewitt(self, img):
+        # Convert to grayscale first
+        img_gray = img.convert('L')
+        img_array = np.array(img_gray, dtype=np.float32)
+
+        # Prewitt kernels
+        kernel_x = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]])
+        kernel_y = np.array([[-1, -1, -1], [0, 0, 0], [1, 1, 1]])
+
+        # Apply Prewitt operators
+        prewitt_x = cv2.filter2D(img_array, cv2.CV_64F, kernel_x)
+        prewitt_y = cv2.filter2D(img_array, cv2.CV_64F, kernel_y)
+
+        # Calculate magnitude
+        magnitude = np.sqrt(prewitt_x**2 + prewitt_y**2)
+
+        # Normalize to 0-255
+        magnitude = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
+
+        # Convert back to PIL Image
+        return Image.fromarray(magnitude.astype(np.uint8)).convert('RGBA')
+
+    def apply_laplacian(self, img):
+        # Convert to grayscale first
+        img_gray = img.convert('L')
+        img_array = np.array(img_gray, dtype=np.float32)
+
+        # Apply Laplacian
+        laplacian = cv2.Laplacian(img_array, cv2.CV_64F, ksize=3)
+
+        # Take absolute value and normalize
+        laplacian = np.absolute(laplacian)
+        laplacian = cv2.normalize(laplacian, None, 0, 255, cv2.NORM_MINMAX)
+
+        # Convert back to PIL Image
+        return Image.fromarray(laplacian.astype(np.uint8)).convert('RGBA')
+    
     def apply_sepia(self, img):
         img_array = np.array(img.convert("RGB"))
         sepia_filter = np.array([[0.393, 0.769, 0.189],
