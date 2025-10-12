@@ -527,6 +527,9 @@ class AdvancedImageProcessor(tk.Tk):
 
     def _build_enhancement_tab(self, parent):
         ttk.Label(parent, text="Apply Enhancement Techniques:").pack(anchor="w", padx=10, pady=(4, 6))
+        ttk.Button(parent, text="Auto Enhance", style="Accent.TButton",
+                   command=lambda: self._with_overlay(self._auto_enhance, title="Auto Enhancing...")
+                   ).pack(fill=tk.X, padx=10, pady=4)
         ttk.Button(parent, text="Sharpen", style="Accent.TButton",
                    command=lambda: self._with_overlay(self._sharpen_image, title="Sharpening...")
                    ).pack(fill=tk.X, padx=10, pady=4)
@@ -557,7 +560,42 @@ class AdvancedImageProcessor(tk.Tk):
         self._add_slider_with_entry(parent, "Smoothing Kernel", "smooth_kernel", 1, 15, 5, None)
         ttk.Button(parent, text="Apply Smoothing", style="Accent.TButton",
                    command=self._apply_smoothing).pack(fill=tk.X, padx=10, pady=(4, 8))
-        
+    def _auto_enhance(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "No image loaded!")
+            return
+
+        confirm = messagebox.askyesno(
+            "Auto Enhance",
+            "Apply automatic enhancement (lighting, contrast, color, sharpness, gamma correction)?"
+        )
+        if not confirm:
+            return
+        self.save_state()
+        img = self.current_image.convert("RGB")
+        img = ImageOps.autocontrast(img, cutoff=2)
+
+        img_np = np.array(img).astype(np.float32)
+        mean_per_channel = img_np.mean(axis=(0, 1), keepdims=True)
+        img_np = np.clip(img_np / (mean_per_channel / 128), 0, 255).astype(np.uint8)
+        img = Image.fromarray(img_np)
+
+        img = ImageEnhance.Color(img).enhance(1.4)
+
+        img = ImageEnhance.Contrast(img).enhance(1.3)
+
+        img = ImageEnhance.Brightness(img).enhance(1.1)
+
+        img = ImageEnhance.Sharpness(img).enhance(1.2)
+
+        gamma = 1.05
+        lut = [pow(x / 255.0, 1 / gamma) * 255 for x in range(256)]
+        img = img.point(lut * 3)
+
+        self.current_image = img.convert("RGBA")
+        self.update_image_preview(self.current_image)
+        self._update_toolbar_state()
+
     def _apply_gamma_correction(self):
         if self.current_image is None:
             messagebox.showwarning("Warning", "No image loaded!")
@@ -1711,6 +1749,7 @@ class AdvancedImageProcessor(tk.Tk):
         img_back = np.fft.ifft2(np.fft.ifftshift(fshift))
         img_back = np.abs(img_back)
         result = Image.fromarray(np.uint8(np.clip(img_back, 0, 255)))
+        self.save_state()
         self.current_image = result.convert("RGBA")
         self.update_image_preview(self.current_image)
         self._update_toolbar_state()
@@ -1739,6 +1778,7 @@ class AdvancedImageProcessor(tk.Tk):
         img_back = np.abs(img_back)
         result = Image.fromarray(np.uint8(np.clip(img_back, 0, 255)))
         self.current_image = result.convert("RGBA")
+        self.save_state()
         self.update_image_preview(self.current_image)
         self._update_toolbar_state()
 
@@ -1841,6 +1881,7 @@ class AdvancedImageProcessor(tk.Tk):
         
         img_sharp = self.current_image.filter(ImageFilter.SHARPEN)
         self.current_image = img_sharp.convert("RGBA")
+        self.save_state()
         self.update_image_preview(self.current_image)
         self._update_toolbar_state()
 
@@ -1853,6 +1894,7 @@ class AdvancedImageProcessor(tk.Tk):
             return
         img_denoised = self.current_image.filter(ImageFilter.GaussianBlur(radius=1.5))
         self.current_image = img_denoised.convert("RGBA")
+        self.save_state()
         self.update_image_preview(self.current_image)
         self._update_toolbar_state()
 
@@ -1866,6 +1908,7 @@ class AdvancedImageProcessor(tk.Tk):
         
         img_detail = self.current_image.filter(ImageFilter.DETAIL)
         self.current_image = img_detail.convert("RGBA")
+        self.save_state()
         self.update_image_preview(self.current_image)
         self._update_toolbar_state()
 
