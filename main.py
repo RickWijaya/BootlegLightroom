@@ -177,18 +177,46 @@ class AdvancedImageProcessor(tk.Tk):
         add_btn("enchance" ,"Enchance Image", self.enhance_image)
         add_btn("remove","Remove Background",self.remove_background)
         self.filter_var = tk.StringVar(value="Oil Paint")
-        filters = ["Oil Paint", "Watercolor", "Cartoonize", "Pencil Sketch", "Pixelize", "Vivid Pop"]
-        ttk.Label(topbar, text="Filter:").pack(side=tk.LEFT, padx=5)
+        filters = [
+            "winterblues",
+            "wispy",
+            "geode",
+            "sketchy",
+            "dystopia",
+            "pastel",
+            "moonlight",
+            "rainbow",
+            "popsketch",
+            "badlands",
+            "flora",
+            "galaxy",
+            "crushedmarble",
+            "haze",
+            "shamrock",
+            "flare",
+            "rosegold",
+            "nightcore",
+            "soul",
+            "rosequartz",
+            "animation",
+            "feast",
+            "undead",
+            "highlight",
+            "neopop",
+            "midnight",
+            "colorbright",
+            "cartoon1",
+            "cartoon2",
+        ]
+
+        ttk.Label(topbar, text="Artistic Filter:").pack(side=tk.LEFT, padx=5)
         filter_menu = ttk.OptionMenu(topbar, self.filter_var, filters[0], *filters)
         filter_menu.pack(side=tk.LEFT, padx=2)
-        ttk.Button(topbar, text="Apply Artistic Filter", command=self.apply_artistic_filter).pack(side=tk.LEFT, padx=2)
+        ttk.Button(topbar, text="Apply Artistic Filter", command=self.apply_artistic_filter).pack(side=tk.LEFT, padx=4)
         self.status_label = ttk.Label(topbar, text="No image loaded", style="Header.TLabel")
         self.status_label.pack(side=tk.RIGHT, padx=12)
-
-        # ---------- Content (5 kolom: left | toggleL | center | toggleR | right) ----------
         content = tk.Frame(self, bg="#0b1220")
         content.pack(fill=tk.BOTH, expand=True)
-
         content.grid_columnconfigure(0, weight=0)  # left
         content.grid_columnconfigure(1, weight=0)  # left toggle
         content.grid_columnconfigure(2, weight=1)  # center
@@ -886,6 +914,7 @@ class AdvancedImageProcessor(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred:\n{e}")
             self.status_label.config(text="❌ Error during background removal.")
+    """
     def apply_artistic_filter(self):
         if not self.current_image:
             messagebox.showwarning("No Image", "Please open or generate an image first.")
@@ -920,6 +949,71 @@ class AdvancedImageProcessor(tk.Tk):
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to apply filter:\n{e}")
+
+    """
+    def apply_artistic_filter(self):
+        selected_filter = self.filter_var.get().lower().replace(" ", "")
+        if not self.current_image:
+            messagebox.showwarning("No Image", "Please open an image first.")
+            return
+        confirm = messagebox.askyesno("Apply Filter", f"Are you sure you want to apply '{selected_filter}'?")
+        if not confirm:
+            return
+        try:
+            # Show loading overlay while processing
+            self._show_loading_overlay(f"Applying '{selected_filter}' filter...")
+            self.status_label.config(text=f"Applying Picsart effect: {selected_filter}...")
+            self.status_label.update_idletasks()
+
+            # Convert the current image in memory to binary data (JPG)
+            img_buffer = BytesIO()
+            img_to_send = self.current_image.convert("RGB")
+            img_to_send.save(img_buffer, format="JPEG")
+            img_buffer.seek(0)
+
+            url = "https://api.picsart.io/tools/1.0/effects/ai"
+
+            # Prepare multipart form-data payload
+            files = {
+                "image": ("image.jpg", img_buffer, "image/jpeg"),
+            }
+            data = {
+                "effect_name": selected_filter,  # The chosen AI effect (like 'cartoon', 'pastel', etc.)
+                "format": "PNG"
+            }
+            headers = {
+            "accept": "application/json",
+            "X-Picsart-API-key": "paat-sqWPSobBXjxFi8v6AFxA5NbTMmv",
+            }
+            # Send request to Picsart API
+            response = requests.post(url, files=files, data=data, headers=headers, timeout=120)
+            response.raise_for_status()
+            result = response.json()
+
+            # The API returns a URL for the processed image
+            if "data" in result and "url" in result["data"]:
+                image_url = result["data"]["url"]
+            else:
+                raise Exception(f"Unexpected response format:\n{result}")
+
+            # Download the processed image
+            img_response = requests.get(image_url, timeout=60)
+            img_response.raise_for_status()
+
+            # Open and display the image
+            processed_img = Image.open(BytesIO(img_response.content)).convert("RGB")
+            self.current_image = processed_img
+            self.save_state()
+            self.update_image_preview()
+            self.status_label.config(text=f"Applied '{selected_filter}' effect successfully.")
+            self._update_toolbar_state(True)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to apply filter:\n{e}")
+            self.status_label.config(text="Filter application failed.")
+
+        finally:
+            self._hide_loading_overlay()
 
     def generate_ai_image(self):
         prompt = simpledialog.askstring("AI Image Generation with Pollinations", "Enter your image prompt:")
