@@ -848,7 +848,7 @@ class AdvancedImageProcessor(tk.Tk):
                 enhanced_image = Image.open(io.BytesIO(response.content)).convert("RGB")
 
                 # Replace current image in memory
-                self.original_image = enhanced_image
+                self.save_state()
                 self.current_image = enhanced_image.copy()
 
                 # Refresh UI
@@ -895,9 +895,8 @@ class AdvancedImageProcessor(tk.Tk):
             if response.status_code == requests.codes.ok:
                 # Load the processed image directly from memory
                 result_image = Image.open(io.BytesIO(response.content)).convert("RGBA")
-
-                # Replace current image in memory
-                self.original_image = result_image
+                
+                self.save_state()
                 self.current_image = result_image.copy()
 
                 # Reset sliders, refresh preview
@@ -914,43 +913,7 @@ class AdvancedImageProcessor(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred:\n{e}")
             self.status_label.config(text="❌ Error during background removal.")
-    """
-    def apply_artistic_filter(self):
-        if not self.current_image:
-            messagebox.showwarning("No Image", "Please open or generate an image first.")
-            return
-
-        selected_filter = self.filter_var.get()
-        self.save_state()
-        img = self.current_image.copy()
-
-        try:
-            if selected_filter == "Oil Paint":
-                img = img.filter(ImageFilter.ModeFilter(size=7))
-            elif selected_filter == "Watercolor":
-                img = img.filter(ImageFilter.SMOOTH_MORE)
-                img = img.filter(ImageFilter.DETAIL)
-            elif selected_filter == "Cartoonize":
-                img = img.filter(ImageFilter.EDGE_ENHANCE_MORE)
-                img = ImageEnhance.Color(img).enhance(1.8)
-            elif selected_filter == "Pencil Sketch":
-                gray = img.convert("L").filter(ImageFilter.CONTOUR)
-                img = gray.convert("RGB")
-            elif selected_filter == "Pixelize":
-                small = img.resize((64, 64), resample=Image.BILINEAR)
-                img = small.resize(img.size, Image.NEAREST)
-            elif selected_filter == "Vivid Pop":
-                img = ImageEnhance.Color(img).enhance(2.2)
-                img = ImageEnhance.Contrast(img).enhance(1.4)
-
-            self.current_image = img
-            self.update_image_preview()
-            self.status_label.config(text=f"Applied '{selected_filter}' filter")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to apply filter:\n{e}")
-
-    """
+            
     def apply_artistic_filter(self):
         selected_filter = self.filter_var.get().lower().replace(" ", "")
         if not self.current_image:
